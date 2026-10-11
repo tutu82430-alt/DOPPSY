@@ -116,6 +116,10 @@ public class Appointment {
         /** Appointment was attended and concluded. */
         COMPLETED,
         /** Appointment was cancelled before attending. */
-        CANCELLED
+        CANCELLED,
+        /** Patient did not arrive for the scheduled appointment. */
+        NO_SHOW,
+        /** Slot was blocked out by doctor/clinic and cannot be booked. */
+        BLOCKED
     }
 }

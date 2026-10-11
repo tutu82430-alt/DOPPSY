@@ -1,4 +1,11 @@
-import type { AuthResponse, BookingResponse, DoctorResponse, Specialty } from '@/types'
+import type {
+  AuthResponse,
+  BookingResponse,
+  DoctorResponse,
+  Specialty,
+  RosterItemResponse,
+  BlockSlotResponse,
+} from '@/types'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
 
@@ -134,3 +141,100 @@ export async function cancelAppointment(appointmentId: string): Promise<BookingR
   })
   return handleResponse<BookingResponse>(res)
 }
+
+// ─── Doctor Roster & Clinic Management ────────────────────────────────────────
+
+/**
+ * Fetches the authenticated doctor's full patient schedule for a specific date.
+ * Defaults to today's date if no date string is provided.
+ *
+ * @param date optional ISO date string (YYYY-MM-DD)
+ * @param providerId optional provider ID override
+ */
+export async function getDoctorRoster(date?: string, providerId?: string): Promise<RosterItemResponse[]> {
+  const params = new URLSearchParams()
+  if (date) params.set('date', date)
+  if (providerId) params.set('providerId', providerId)
+
+  const query = params.toString() ? `?${params.toString()}` : ''
+  const headers = authHeaders()
+  if (providerId) {
+    (headers as Record<string, string>)['X-Provider-Id'] = providerId
+  }
+
+  const res = await fetch(`${API_BASE}/api/v1/doctor/roster${query}`, {
+    headers,
+  })
+  return handleResponse<RosterItemResponse[]>(res)
+}
+
+/**
+ * Updates an appointment's status on the doctor's roster (COMPLETED, CANCELLED, NO_SHOW).
+ *
+ * @param id appointment UUID
+ * @param status target status
+ * @param providerId optional provider ID override
+ */
+export async function updateAppointmentStatus(
+  id: string,
+  status: 'COMPLETED' | 'CANCELLED' | 'NO_SHOW',
+  providerId?: string
+): Promise<RosterItemResponse> {
+  const params = providerId ? `?providerId=${providerId}` : ''
+  const headers = authHeaders()
+  if (providerId) {
+    (headers as Record<string, string>)['X-Provider-Id'] = providerId
+  }
+
+  const res = await fetch(`${API_BASE}/api/v1/doctor/appointments/${id}/status${params}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ status }),
+  })
+  return handleResponse<RosterItemResponse>(res)
+}
+
+/**
+ * Blocks out custom time intervals for emergencies, surgery, personal leave, or meetings.
+ *
+ * @param startTime ISO timestamp string (e.g. 2026-10-11T14:00:00)
+ * @param endTime optional ISO timestamp string
+ * @param reason optional note (e.g. 'Emergency Surgery')
+ * @param providerId optional provider ID override
+ */
+export async function blockDoctorSlot(
+  startTime: string,
+  endTime?: string,
+  reason?: string,
+  providerId?: string
+): Promise<BlockSlotResponse> {
+  const params = providerId ? `?providerId=${providerId}` : ''
+  const headers = authHeaders()
+  if (providerId) {
+    (headers as Record<string, string>)['X-Provider-Id'] = providerId
+  }
+
+  const res = await fetch(`${API_BASE}/api/v1/doctor/slots/block${params}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ startTime, endTime, reason }),
+  })
+  return handleResponse<BlockSlotResponse>(res)
+}
+
+/**
+ * Fetches doctor profile information for header display.
+ */
+export async function getDoctorProfile(providerId?: string): Promise<DoctorResponse> {
+  const params = providerId ? `?providerId=${providerId}` : ''
+  const headers = authHeaders()
+  if (providerId) {
+    (headers as Record<string, string>)['X-Provider-Id'] = providerId
+  }
+
+  const res = await fetch(`${API_BASE}/api/v1/doctor/profile${params}`, {
+    headers,
+  })
+  return handleResponse<DoctorResponse>(res)
+}
+

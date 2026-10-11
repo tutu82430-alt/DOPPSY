@@ -97,7 +97,7 @@ Every bookable time slot is one row. The booking engine transitions rows through
 | `user_id` | `UUID` | **FK** → `users.user_id`, `ON DELETE SET NULL` | Patient; `NULL` when slot is AVAILABLE |
 | `provider_id` | `UUID` | **FK** → `providers.provider_id`, `NOT NULL`, `ON DELETE RESTRICT` | Provider who owns the slot |
 | `appointment_timestamp` | `TIMESTAMP` | `NOT NULL` | Scheduled UTC date/time |
-| `status` | `VARCHAR(20)` | `NOT NULL`, `DEFAULT 'AVAILABLE'`, `CHECK IN (...)` | Slot lifecycle state |
+| `status` | `VARCHAR(20)` | `NOT NULL`, `DEFAULT 'AVAILABLE'`, `CHECK IN ('AVAILABLE','BOOKED','COMPLETED','CANCELLED','NO_SHOW','BLOCKED')` | Slot lifecycle state |
 | `booking_fee` | `DECIMAL(10,2)` | `CHECK (booking_fee >= 0)` | Fee in platform currency (INR) |
 | `created_at` | `TIMESTAMP` | `NOT NULL`, `DEFAULT CURRENT_TIMESTAMP` | UTC creation time |
 
@@ -105,8 +105,10 @@ Every bookable time slot is one row. The booking engine transitions rows through
 
 ```
 AVAILABLE ──► BOOKED ──► COMPLETED
+                │        ├──► NO_SHOW
+                │        └──► CANCELLED
                 │
-                └──────► CANCELLED
+              BLOCKED (Held by Doctor/Clinic)
 ```
 
 **Indexes:** `idx_appt_user_id` · `idx_appt_provider_id` · `idx_appt_status` · `idx_appt_timestamp`

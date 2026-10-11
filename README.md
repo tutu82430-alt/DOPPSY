@@ -35,15 +35,16 @@ Premium healthcare concierge platform — zero-wait-time booking system for pati
 | `schema.sql` | PostgreSQL DDL with indexes, foreign keys, and constraints |
 | `schema.md` | Complete database schema documentation and ER diagrams |
 | `src/main/java/com/doppsy/` | Spring Boot 3 backend application code |
-| ├── `controller/` | REST API endpoints (`AuthController`, `ProviderController`, `AppointmentController`) |
-| ├── `service/` | Business logic & transaction management (`AuthService`, `ProviderService`, `AppointmentService`) |
+| ├── `controller/` | REST API endpoints (`AuthController`, `ProviderController`, `AppointmentController`, `DoctorController`) |
+| ├── `service/` | Business logic & transaction management (`AuthService`, `ProviderService`, `AppointmentService`, `DoctorService`) |
 | ├── `repository/` | Spring Data JPA repositories with `@Lock(PESSIMISTIC_WRITE)` concurrency protection |
 | ├── `entity/` | JPA Entities (`User`, `Provider`, `Appointment`) |
-| ├── `dto/` | Request / Response data transfer objects |
+| ├── `dto/` | Request / Response data transfer objects (`RosterItemResponse`, `BlockSlotRequest`, etc.) |
 | └── `config/` | Data seeder with sample providers and security / CORS configuration |
 | `doppsy-web/` | Next.js 14 App Router frontend with Tailwind CSS & Lucide icons |
 | ├── `src/app/page.tsx` | Mobile OTP authentication landing page |
 | ├── `src/app/dashboard/` | Doctor discovery & appointment booking dashboard |
+| ├── `src/app/doctor/` | Clinic & Doctor Operations dashboard (Roster queue & Slot blocking) |
 | └── `src/services/api.ts` | Centralized API client connecting to Spring Boot backend |
 
 ---

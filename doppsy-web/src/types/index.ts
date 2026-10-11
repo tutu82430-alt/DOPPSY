@@ -37,7 +37,13 @@ export interface DoctorResponse {
 
 // ─── Appointments ─────────────────────────────────────────────────────────────
 
-export type AppointmentStatus = 'AVAILABLE' | 'BOOKED' | 'COMPLETED' | 'CANCELLED'
+export type AppointmentStatus =
+  | 'AVAILABLE'
+  | 'BOOKED'
+  | 'COMPLETED'
+  | 'CANCELLED'
+  | 'NO_SHOW'
+  | 'BLOCKED'
 
 export interface BookingResponse {
   appointmentId: string
@@ -53,4 +59,37 @@ export interface BookingResponse {
 export interface BookingRequest {
   providerId: string
   appointmentTimestamp: string
+}
+
+// ─── Doctor Roster & Clinic Management ────────────────────────────────────────
+
+export interface RosterItemResponse {
+  appointmentId: string
+  appointmentTimestamp: string
+  status: AppointmentStatus
+  patientName: string
+  patientAge: number | null
+  patientContact: string
+  patientUserId?: string | null
+  bookingFee: number
+  createdAt?: string
+}
+
+export interface UpdateAppointmentStatusRequest {
+  status: 'COMPLETED' | 'CANCELLED' | 'NO_SHOW'
+}
+
+export interface BlockSlotRequest {
+  startTime: string
+  endTime?: string
+  reason?: string
+}
+
+export interface BlockSlotResponse {
+  providerId: string
+  blockedSlotsCount: number
+  startTime: string
+  endTime: string
+  reason: string
+  message: string
 }

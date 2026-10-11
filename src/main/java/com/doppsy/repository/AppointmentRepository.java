@@ -69,6 +69,51 @@ public interface AppointmentRepository extends JpaRepository<Appointment, UUID> 
      */
     List<Appointment> findAllByProviderProviderIdAndStatus(UUID providerId, AppointmentStatus status);
 
+    /**
+     * Fetches the full patient schedule/roster for a provider on a specific date range,
+     * eager-fetching the patient (user) details to prevent N+1 queries.
+     * Ordered chronologically by appointment timestamp.
+     *
+     * @param providerId the provider's UUID
+     * @param startOfDay start of the target day (00:00:00)
+     * @param endOfDay   end of the target day (23:59:59.999999)
+     * @return chronological list of appointment slots
+     */
+    @Query("""
+        SELECT a FROM Appointment a
+        LEFT JOIN FETCH a.user u
+        WHERE a.provider.providerId = :providerId
+          AND a.appointmentTimestamp >= :startOfDay
+          AND a.appointmentTimestamp <= :endOfDay
+        ORDER BY a.appointmentTimestamp ASC
+        """)
+    List<Appointment> findRosterByProviderAndDate(
+        @Param("providerId") UUID providerId,
+        @Param("startOfDay") LocalDateTime startOfDay,
+        @Param("endOfDay") LocalDateTime endOfDay
+    );
+
+    /**
+     * Finds all appointment slots for a provider in a given interval (e.g. for blocking).
+     *
+     * @param providerId the provider's UUID
+     * @param startTime  interval start
+     * @param endTime    interval end
+     * @return list of matching slots
+     */
+    @Query("""
+        SELECT a FROM Appointment a
+        WHERE a.provider.providerId = :providerId
+          AND a.appointmentTimestamp >= :startTime
+          AND a.appointmentTimestamp <= :endTime
+        ORDER BY a.appointmentTimestamp ASC
+        """)
+    List<Appointment> findSlotsInInterval(
+        @Param("providerId") UUID providerId,
+        @Param("startTime") LocalDateTime startTime,
+        @Param("endTime") LocalDateTime endTime
+    );
+
     // ----------------------------------------------------------------
     // Zero-wait booking engine — concurrency-safe slot claim
     // ----------------------------------------------------------------

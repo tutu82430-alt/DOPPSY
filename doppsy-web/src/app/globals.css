@@ -110,10 +110,12 @@ body {
   .badge-premium    { @apply badge bg-amber-500/15 text-amber-400; }
   .badge-basic      { @apply badge bg-blue-500/15 text-blue-400; }
   .badge-free       { @apply badge bg-slate-500/15 text-slate-400; }
-  .badge-booked     { @apply badge bg-cyan-500/15 text-cyan-400; }
-  .badge-cancelled  { @apply badge bg-red-500/15 text-red-400; }
-  .badge-completed  { @apply badge bg-emerald-500/15 text-emerald-400; }
-  .badge-available  { @apply badge bg-violet-500/15 text-violet-400; }
+  .badge-booked     { @apply badge bg-cyan-500/15 text-cyan-400 border border-cyan-500/20; }
+  .badge-cancelled  { @apply badge bg-red-500/15 text-red-400 border border-red-500/20; }
+  .badge-completed  { @apply badge bg-emerald-500/15 text-emerald-400 border border-emerald-500/20; }
+  .badge-available  { @apply badge bg-violet-500/15 text-violet-400 border border-violet-500/20; }
+  .badge-noshow     { @apply badge bg-amber-500/15 text-amber-400 border border-amber-500/20; }
+  .badge-blocked    { @apply badge bg-slate-500/15 text-slate-400 border border-slate-500/20; }
 
   .gradient-text {
     @apply bg-clip-text text-transparent;

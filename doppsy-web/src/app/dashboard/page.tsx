@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import {
   getDoctors,
   getMyAppointments,
@@ -377,7 +378,14 @@ export default function DashboardPage() {
             <span className="font-bold text-white">Doppsy</span>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <Link
+              href="/doctor"
+              className="text-xs text-cyan-300 hover:text-white px-3 py-1.5 rounded-lg border border-cyan-500/30 hover:border-cyan-500 bg-cyan-500/10 transition-all flex items-center gap-1.5"
+            >
+              <Stethoscope className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Doctor Portal</span>
+            </Link>
             <div className="hidden sm:flex flex-col text-right">
               <p className="text-sm font-medium text-white">{user.fullName}</p>
               <p className="text-xs text-slate-500">{user.role}</p>

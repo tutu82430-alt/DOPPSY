@@ -90,6 +90,17 @@ public class GlobalExceptionHandler {
         return pd;
     }
 
+    /** 403 — unauthorized access / forbidden action */
+    @ExceptionHandler(UnauthorizedAccessException.class)
+    public ProblemDetail handleUnauthorized(UnauthorizedAccessException ex) {
+        log.warn("Unauthorized access: {}", ex.getMessage());
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, ex.getMessage());
+        pd.setType(URI.create("https://doppsy.com/errors/forbidden"));
+        pd.setTitle("Access Forbidden");
+        pd.setProperty("timestamp", Instant.now());
+        return pd;
+    }
+
     /** 500 — catch-all */
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleGeneral(Exception ex) {

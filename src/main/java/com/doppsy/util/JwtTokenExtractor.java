@@ -28,6 +28,8 @@ public class JwtTokenExtractor {
 
     private final JwtUtil jwtUtil;
 
+    private final ProviderRepository providerRepository;
+
     /**
      * Extracts the JWT from the {@code Authorization: Bearer <token>} header,
      * validates the signature, and returns the authenticated user's UUID.
@@ -51,6 +53,56 @@ public class JwtTokenExtractor {
         } catch (Exception e) {
             throw new InvalidOtpException("Invalid or expired token: " + e.getMessage());
         }
+    }
+
+    /**
+     * Resolves the provider ID for doctor endpoints:
+     * 1. Checks 'X-Provider-Id' request header
+     * 2. Checks 'providerId' query parameter
+     * 3. Checks 'providerId' claim in the JWT
+     * 4. Fallback in development: returns the first verified provider in the database
+     *
+     * @param request the incoming HTTP request
+     * @return resolved provider UUID
+     */
+    public UUID extractProviderIdOrThrow(HttpServletRequest request) {
+        // 1. Check X-Provider-Id header
+        String headerPid = request.getHeader("X-Provider-Id");
+        if (StringUtils.hasText(headerPid)) {
+            try {
+                return UUID.fromString(headerPid.trim());
+            } catch (IllegalArgumentException ignored) {}
+        }
+
+        // 2. Check query parameter
+        String paramPid = request.getParameter("providerId");
+        if (StringUtils.hasText(paramPid)) {
+            try {
+                return UUID.fromString(paramPid.trim());
+            } catch (IllegalArgumentException ignored) {}
+        }
+
+        // 3. Check JWT token claim if token present
+        String bearerToken = request.getHeader(HttpHeaders.AUTHORIZATION);
+        if (StringUtils.hasText(bearerToken) && bearerToken.startsWith("Bearer ")) {
+            try {
+                String token = bearerToken.substring(7);
+                Claims claims = jwtUtil.parseToken(token);
+                String claimPid = claims.get("providerId", String.class);
+                if (StringUtils.hasText(claimPid)) {
+                    return UUID.fromString(claimPid);
+                }
+            } catch (Exception ignored) {}
+        }
+
+        // 4. Default fallback to first verified provider for easy demo/testing
+        return providerRepository.findAllByIsVerified(true).stream()
+            .findFirst()
+            .map(com.doppsy.entity.Provider::getProviderId)
+            .orElseGet(() -> providerRepository.findAll().stream()
+                .findFirst()
+                .map(com.doppsy.entity.Provider::getProviderId)
+                .orElseThrow(() -> new InvalidOtpException("No provider found in database.")));
     }
 
     /**
