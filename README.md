@@ -1,29 +1,81 @@
 # Doppsy Healthcare Concierge
 
-Premium healthcare concierge backend — zero-wait-time booking system for patients, doctors, and veterinarians.
+Premium healthcare concierge platform — zero-wait-time booking system for patients, doctors, veterinarians, and dieticians.
 
-## Project Structure
+---
 
-| File | Description |
+## Architecture Overview
+
+```
+                      ┌───────────────────────────────────────┐
+                      │          doppsy-web (Next.js 14)      │
+                      │  Tailwind CSS + App Router (Port 3000)│
+                      └──────────────────┬────────────────────┘
+                                         │ REST (JSON + JWT)
+                                         ▼
+                      ┌───────────────────────────────────────┐
+                      │      Doppsy Backend (Spring Boot 3)   │
+                      │        Java 17 / Maven (Port 8080)    │
+                      └──────────────────┬────────────────────┘
+                                         │ JDBC / JPA
+                                         ▼
+                      ┌───────────────────────────────────────┐
+                      │      PostgreSQL (Docker Container)    │
+                      │         Database: doppsy:5432         │
+                      └───────────────────────────────────────┘
+```
+
+---
+
+## Repository Structure
+
+| Directory / File | Description |
 |---|---|
-| `schema.sql` | PostgreSQL DDL — full database schema with constraints & indexes |
-| `schema.md` | Human-readable schema documentation |
+| `docker-compose.yml` | PostgreSQL container definition (`doppsy-db`) |
+| `schema.sql` | PostgreSQL DDL with indexes, foreign keys, and constraints |
+| `schema.md` | Complete database schema documentation and ER diagrams |
+| `src/main/java/com/doppsy/` | Spring Boot 3 backend application code |
+| ├── `controller/` | REST API endpoints (`AuthController`, `ProviderController`, `AppointmentController`) |
+| ├── `service/` | Business logic & transaction management (`AuthService`, `ProviderService`, `AppointmentService`) |
+| ├── `repository/` | Spring Data JPA repositories with `@Lock(PESSIMISTIC_WRITE)` concurrency protection |
+| ├── `entity/` | JPA Entities (`User`, `Provider`, `Appointment`) |
+| ├── `dto/` | Request / Response data transfer objects |
+| └── `config/` | Data seeder with sample providers and security / CORS configuration |
+| `doppsy-web/` | Next.js 14 App Router frontend with Tailwind CSS & Lucide icons |
+| ├── `src/app/page.tsx` | Mobile OTP authentication landing page |
+| ├── `src/app/dashboard/` | Doctor discovery & appointment booking dashboard |
+| └── `src/services/api.ts` | Centralized API client connecting to Spring Boot backend |
+
+---
 
 ## Quick Start
 
+### 1. Database Setup
 ```bash
-# Create the database
-createdb doppsy_db
-
-# Apply schema
-psql -U postgres -d doppsy_db -f schema.sql
+docker-compose up -d
 ```
 
-## Tech Stack
+### 2. Spring Boot Backend
+```bash
+mvn clean spring-boot:run
+```
+The backend starts on `http://localhost:8080` with sample seed data preloaded.
 
-- **Database:** PostgreSQL 15+
-- **Storage:** AWS S3 (health record documents)
-- **Auth:** Mobile OTP (E.164 format)
+### 3. Frontend Web App
+```bash
+cd doppsy-web
+npm install
+npm run dev
+```
+Open [http://localhost:3000](http://localhost:3000).
+
+---
+
+## Authentication & Test Credentials
+
+- **Default Test OTP**: `123456`
+- **Supported Roles**: `PATIENT`, `ADMIN`
+- **Specialties**: Allopathy, Ayurveda, Veterinary, Dietician, Dentistry, Dermatology, etc.
 
 ---
 *© 2026 Doppsy Healthcare Pvt. Ltd.*

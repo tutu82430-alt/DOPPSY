@@ -1,0 +1,132 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+/* ── Root variables ──────────────────────────────────────────────────────── */
+:root {
+  --font-inter: 'Inter', system-ui, sans-serif;
+  --bg-primary:   #0a0f1e;
+  --bg-secondary: #0d1526;
+  --surface-card: rgba(255, 255, 255, 0.04);
+  --surface-border: rgba(255, 255, 255, 0.08);
+  --text-primary:   #f1f5f9;
+  --text-secondary: #94a3b8;
+  --accent-cyan:    #06b6d4;
+  --accent-purple:  #8b5cf6;
+}
+
+/* ── Base ────────────────────────────────────────────────────────────────── */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-inter);
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-primary); }
+::-webkit-scrollbar-thumb { background: rgba(6, 182, 212, 0.3); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(6, 182, 212, 0.6); }
+
+/* ── Glassmorphism utilities ─────────────────────────────────────────────── */
+@layer components {
+  .glass-card {
+    @apply backdrop-blur-xl border rounded-2xl;
+    background: var(--surface-card);
+    border-color: var(--surface-border);
+  }
+
+  .glass-card-hover {
+    @apply glass-card transition-all duration-300;
+  }
+  .glass-card-hover:hover {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(6, 182, 212, 0.3);
+    box-shadow: 0 0 30px rgba(6, 182, 212, 0.1);
+    transform: translateY(-2px);
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-semibold text-sm transition-all duration-200 text-white;
+    background: linear-gradient(135deg, #06b6d4, #8b5cf6);
+    box-shadow: 0 4px 20px rgba(6, 182, 212, 0.3);
+  }
+  .btn-primary:hover {
+    box-shadow: 0 6px 30px rgba(6, 182, 212, 0.5);
+    transform: translateY(-1px);
+  }
+  .btn-primary:active { transform: translateY(0); }
+  .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all duration-200;
+    color: var(--text-secondary);
+    border: 1px solid var(--surface-border);
+    background: transparent;
+  }
+  .btn-ghost:hover {
+    color: var(--text-primary);
+    border-color: rgba(6, 182, 212, 0.4);
+    background: rgba(6, 182, 212, 0.06);
+  }
+
+  .input-field {
+    @apply w-full px-4 py-3 rounded-xl text-sm outline-none transition-all duration-200;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--surface-border);
+    color: var(--text-primary);
+    caret-color: #06b6d4;
+  }
+  .input-field::placeholder { color: var(--text-secondary); }
+  .input-field:focus {
+    border-color: rgba(6, 182, 212, 0.5);
+    box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.1);
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+  .badge-verified   { @apply badge bg-emerald-500/15 text-emerald-400; }
+  .badge-premium    { @apply badge bg-amber-500/15 text-amber-400; }
+  .badge-basic      { @apply badge bg-blue-500/15 text-blue-400; }
+  .badge-free       { @apply badge bg-slate-500/15 text-slate-400; }
+  .badge-booked     { @apply badge bg-cyan-500/15 text-cyan-400; }
+  .badge-cancelled  { @apply badge bg-red-500/15 text-red-400; }
+  .badge-completed  { @apply badge bg-emerald-500/15 text-emerald-400; }
+  .badge-available  { @apply badge bg-violet-500/15 text-violet-400; }
+
+  .gradient-text {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, #06b6d4, #8b5cf6);
+  }
+
+  .page-bg {
+    background: radial-gradient(ellipse 80% 60% at 50% -20%, rgba(6,182,212,0.12) 0%, transparent 70%),
+                radial-gradient(ellipse 60% 50% at 80% 80%,  rgba(139,92,246,0.08) 0%, transparent 70%),
+                linear-gradient(180deg, #0a0f1e 0%, #0d1526 100%);
+    min-height: 100vh;
+  }
+}
+
+/* ── Selection ───────────────────────────────────────────────────────────── */
+::selection { background: rgba(6, 182, 212, 0.25); color: #f1f5f9; }
