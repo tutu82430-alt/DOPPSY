@@ -2,8 +2,12 @@ package com.doppsy.repository;
 
 import com.doppsy.entity.Appointment;
 import com.doppsy.entity.Appointment.AppointmentStatus;
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.QueryHint;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.QueryHints;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
@@ -66,13 +70,41 @@ public interface AppointmentRepository extends JpaRepository<Appointment, UUID> 
     List<Appointment> findAllByProviderProviderIdAndStatus(UUID providerId, AppointmentStatus status);
 
     // ----------------------------------------------------------------
-    // Zero-wait booking engine — core query
+    // Zero-wait booking engine — concurrency-safe slot claim
     // ----------------------------------------------------------------
 
     /**
+     * Fetches the appointment at an exact provider + timestamp combination
+     * and acquires a <strong>PESSIMISTIC_WRITE</strong> (SELECT … FOR UPDATE)
+     * row-level lock on it.
+     *
+     * <p>This is the critical path for the booking transaction. Holding this
+     * lock until the enclosing {@code @Transactional} method commits prevents
+     * two concurrent requests from double-booking the same slot.</p>
+     *
+     * <p>A 5-second lock-acquisition timeout is set via the query hint;
+     * callers should handle {@link jakarta.persistence.LockTimeoutException}.</p>
+     *
+     * @param providerId the provider's UUID
+     * @param timestamp  the exact requested appointment time
+     * @return the matching slot wrapped in an Optional (empty if slot doesn't exist yet)
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "5000"))
+    @Query("""
+        SELECT a FROM Appointment a
+        WHERE a.provider.providerId = :providerId
+          AND a.appointmentTimestamp = :timestamp
+        """)
+    Optional<Appointment> findSlotForBooking(
+        @Param("providerId") UUID providerId,
+        @Param("timestamp") LocalDateTime timestamp
+    );
+
+    /**
      * Finds the next {@code AVAILABLE} slot for a provider at or after the
-     * requested time. This query is the heart of the zero-wait booking engine
-     * and is accelerated by the composite index on (provider_id, status, appointment_timestamp).
+     * requested time. Accelerated by the composite index
+     * {@code (provider_id, status, appointment_timestamp)}.
      *
      * @param providerId the target provider's UUID
      * @param from       the earliest acceptable appointment time (inclusive)

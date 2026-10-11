@@ -1,5 +1,6 @@
 package com.doppsy.exception;
 
+import jakarta.persistence.LockTimeoutException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -40,6 +41,30 @@ public class GlobalExceptionHandler {
         ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, ex.getMessage());
         pd.setType(URI.create("https://doppsy.com/errors/invalid-otp"));
         pd.setTitle("OTP Verification Failed");
+        pd.setProperty("timestamp", Instant.now());
+        return pd;
+    }
+
+    /** 409 — slot already booked or unavailable */
+    @ExceptionHandler(SlotUnavailableException.class)
+    public ProblemDetail handleSlotUnavailable(SlotUnavailableException ex) {
+        log.warn("Slot unavailable: {}", ex.getMessage());
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        pd.setType(URI.create("https://doppsy.com/errors/slot-unavailable"));
+        pd.setTitle("Slot Unavailable");
+        pd.setProperty("timestamp", Instant.now());
+        return pd;
+    }
+
+    /** 503 — DB row lock timeout (too many concurrent booking attempts) */
+    @ExceptionHandler(LockTimeoutException.class)
+    public ProblemDetail handleLockTimeout(LockTimeoutException ex) {
+        log.warn("Lock timeout during booking: {}", ex.getMessage());
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(
+            HttpStatus.SERVICE_UNAVAILABLE,
+            "The slot is currently being processed. Please retry in a moment.");
+        pd.setType(URI.create("https://doppsy.com/errors/lock-timeout"));
+        pd.setTitle("Booking Lock Timeout");
         pd.setProperty("timestamp", Instant.now());
         return pd;
     }
