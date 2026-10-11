@@ -47,3 +47,9 @@ doppsy:
     secret: "ZG9wcHN5LXN1cGVyLXNlY3JldC1rZXktMjAyNi1kb3Bwc3ktaGVhbHRoY2FyZQ=="
     expiration-ms: 86400000   # 24 hours
   mock-otp: "123456"
+  whatsapp:
+    verify-token: ${DOPPSY_WHATSAPP_VERIFY_TOKEN:doppsy_whatsapp_secret_token_2026}
+    access-token: ${DOPPSY_WHATSAPP_ACCESS_TOKEN:mock_whatsapp_access_token}
+    phone-number-id: ${DOPPSY_WHATSAPP_PHONE_NUMBER_ID:105948372615201}
+    api-url: "https://graph.facebook.com/v20.0"
+

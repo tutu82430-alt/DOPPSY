@@ -195,4 +195,48 @@ public interface AppointmentRepository extends JpaRepository<Appointment, UUID> 
      * @return total count of slots in that status
      */
     long countByStatus(AppointmentStatus status);
+
+    // ----------------------------------------------------------------
+    // WhatsApp Concierge & Reminder Queries
+    // ----------------------------------------------------------------
+
+    /**
+     * Finds the patient's most recent BOOKED appointment by mobile number.
+     * Matches exact mobile or suffix (to handle international country codes like +91).
+     *
+     * @param mobile the patient's incoming WhatsApp mobile number
+     * @return the most recent booked appointment if one exists
+     */
+    @Query("""
+        SELECT a FROM Appointment a
+        JOIN FETCH a.provider p
+        JOIN FETCH a.user u
+        WHERE (u.mobileNumber = :mobile OR :mobile LIKE CONCAT('%', u.mobileNumber) OR u.mobileNumber LIKE CONCAT('%', :mobile))
+          AND a.status = 'BOOKED'
+        ORDER BY a.appointmentTimestamp DESC
+        LIMIT 1
+        """)
+    Optional<Appointment> findMostRecentBookedByMobile(@Param("mobile") String mobile);
+
+    /**
+     * Finds all BOOKED appointments scheduled within a specific future window
+     * (e.g. 24 hours from the current time) to dispatch automated reminder templates.
+     *
+     * @param windowStart start of reminder window (inclusive)
+     * @param windowEnd   end of reminder window (exclusive)
+     * @return list of matching appointments with eager provider and user associations
+     */
+    @Query("""
+        SELECT a FROM Appointment a
+        JOIN FETCH a.provider p
+        JOIN FETCH a.user u
+        WHERE a.status = 'BOOKED'
+          AND a.appointmentTimestamp >= :windowStart
+          AND a.appointmentTimestamp < :windowEnd
+        ORDER BY a.appointmentTimestamp ASC
+        """)
+    List<Appointment> findBookedAppointmentsInWindow(
+        @Param("windowStart") LocalDateTime windowStart,
+        @Param("windowEnd") LocalDateTime windowEnd
+    );
 }

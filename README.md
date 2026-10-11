@@ -35,8 +35,9 @@ Premium healthcare concierge platform — zero-wait-time booking system for pati
 | `schema.sql` | PostgreSQL DDL with indexes, foreign keys, and constraints |
 | `schema.md` | Complete database schema documentation and ER diagrams |
 | `src/main/java/com/doppsy/` | Spring Boot 3 backend application code |
-| ├── `controller/` | REST API endpoints (`AuthController`, `ProviderController`, `AppointmentController`, `DoctorController`) |
-| ├── `service/` | Business logic & transaction management (`AuthService`, `ProviderService`, `AppointmentService`, `DoctorService`) |
+| ├── `controller/` | REST API endpoints (`AuthController`, `ProviderController`, `AppointmentController`, `DoctorController`, `WhatsAppWebhookController`) |
+| ├── `service/` | Business logic & transaction management (`AuthService`, `ProviderService`, `AppointmentService`, `DoctorService`, `WhatsAppService`, `WhatsAppWebhookService`) |
+| ├── `jobs/` | Background scheduled jobs (`AppointmentReminderJob` — hourly 24h reminders) |
 | ├── `repository/` | Spring Data JPA repositories with `@Lock(PESSIMISTIC_WRITE)` concurrency protection |
 | ├── `entity/` | JPA Entities (`User`, `Provider`, `Appointment`) |
 | ├── `dto/` | Request / Response data transfer objects (`RosterItemResponse`, `BlockSlotRequest`, etc.) |
@@ -46,6 +47,17 @@ Premium healthcare concierge platform — zero-wait-time booking system for pati
 | ├── `src/app/dashboard/` | Doctor discovery & appointment booking dashboard |
 | ├── `src/app/doctor/` | Clinic & Doctor Operations dashboard (Roster queue & Slot blocking) |
 | └── `src/services/api.ts` | Centralized API client connecting to Spring Boot backend |
+
+---
+
+## WhatsApp Concierge & Automated Reminders
+
+- **Meta Webhook Handshake**: `GET /api/v1/whatsapp/webhook` verifies `hub.mode` and `hub.verify_token`, returning `hub.challenge`.
+- **Inbound Message Processing**: `POST /api/v1/whatsapp/webhook` ingests patient WhatsApp replies.
+  - Replying **`CANCEL`** cancels the patient's most recent `BOOKED` appointment and replies with a confirmation.
+  - Other queries trigger a concierge fallback: *"DOPSY Concierge: We have received your message. A human assistant will reply shortly."*
+- **Hourly 24-Hour Reminder Cron**: `AppointmentReminderJob` runs `@Scheduled(cron = "0 0 * * * *")` querying upcoming booked slots and sending reminders with reply-to-cancel capability.
+- **Manual Reminder Trigger**: `POST /api/v1/whatsapp/test-reminder?hours=24` triggers immediate scanning and dispatching.
 
 ---
 

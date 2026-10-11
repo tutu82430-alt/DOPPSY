@@ -2,6 +2,7 @@ package com.doppsy;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * Entry point for the Doppsy Healthcare Concierge backend.
@@ -16,6 +17,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * </pre>
  * </p>
  */
+@EnableScheduling
 @SpringBootApplication
 public class DoppsyApplication {
 

@@ -238,3 +238,32 @@ export async function getDoctorProfile(providerId?: string): Promise<DoctorRespo
   return handleResponse<DoctorResponse>(res)
 }
 
+// ─── WhatsApp Concierge Simulation & Testing ──────────────────────────────────
+
+/**
+ * Simulates an incoming patient WhatsApp message to test concierge cancellation or fallback.
+ *
+ * @param from patient's mobile number (e.g. '9876543210')
+ * @param text message text (e.g. 'CANCEL')
+ */
+export async function simulateWhatsAppMessage(from: string, text: string): Promise<string> {
+  const res = await fetch(`${API_BASE}/api/v1/whatsapp/webhook`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from, text }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.text()
+}
+
+/**
+ * Triggers the 24-hour reminder scan on demand.
+ */
+export async function triggerWhatsAppReminders(hours: number = 24): Promise<{ status: string; remindersSent: number }> {
+  const res = await fetch(`${API_BASE}/api/v1/whatsapp/test-reminder?hours=${hours}`, {
+    method: 'POST',
+  })
+  return handleResponse<{ status: string; remindersSent: number }>(res)
+}
+
+
