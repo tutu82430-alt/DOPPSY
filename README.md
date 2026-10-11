@@ -47,6 +47,10 @@ Premium healthcare concierge platform — zero-wait-time booking system for pati
 | ├── `src/app/dashboard/` | Doctor discovery & appointment booking dashboard |
 | ├── `src/app/doctor/` | Clinic & Doctor Operations dashboard (Roster queue & Slot blocking) |
 | └── `src/services/api.ts` | Centralized API client connecting to Spring Boot backend |
+| `doppsy-mobile/` | React Native iOS & Android application with Expo Router |
+| ├── `app/index.tsx` | Mobile OTP authentication screen |
+| ├── `app/dashboard/index.tsx` | Patient specialist discovery & zero-wait booking screen |
+| └── `src/services/api.ts` | Axios client with AsyncStorage JWT interceptor |
 
 ---
 
