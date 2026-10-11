@@ -1,0 +1,99 @@
+version: '3.8'
+
+# ==============================================================================
+# Doppsy Healthcare Concierge — Production Docker Orchestration
+# ==============================================================================
+
+networks:
+  doppsy-internal:
+    driver: bridge
+
+volumes:
+  postgres_prod_data:
+    driver: local
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. Database: PostgreSQL 15 Engine
+  # ----------------------------------------------------------------------------
+  db:
+    image: postgres:15-alpine
+    container_name: doppsy-db-prod
+    restart: always
+    environment:
+      POSTGRES_DB: doppsy
+      POSTGRES_USER: doppsy_user
+      POSTGRES_PASSWORD: doppsy_secret
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U doppsy_user -d doppsy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - doppsy-internal
+    # Database port 5432 kept strictly internal — no host port exposure
+
+  # ----------------------------------------------------------------------------
+  # 2. Backend: Spring Boot 3 Java Application
+  # ----------------------------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: doppsy-backend-prod
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/doppsy
+      SPRING_DATASOURCE_USERNAME: doppsy_user
+      SPRING_DATASOURCE_PASSWORD: doppsy_secret
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      DOPPSY_JWT_SECRET: "ZG9wcHN5LXN1cGVyLXNlY3JldC1rZXktMjAyNi1kb3Bwc3ktaGVhbHRoY2FyZQ=="
+      DOPPSY_WHATSAPP_VERIFY_TOKEN: "doppsy_whatsapp_secret_token_2026"
+    networks:
+      - doppsy-internal
+    # Backend port 8080 kept strictly internal — traffic routed via Nginx
+
+  # ----------------------------------------------------------------------------
+  # 3. Frontend: Next.js 14 App Router
+  # ----------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./doppsy-web
+      dockerfile: Dockerfile
+    container_name: doppsy-frontend-prod
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    environment:
+      NEXT_PUBLIC_API_URL: /api
+      NODE_ENV: production
+    networks:
+      - doppsy-internal
+    # Frontend port 3000 kept strictly internal — traffic routed via Nginx
+
+  # ----------------------------------------------------------------------------
+  # 4. Reverse Proxy: Nginx Gateway (Public Entry Point)
+  # ----------------------------------------------------------------------------
+  nginx:
+    image: nginx:alpine
+    container_name: doppsy-nginx-prod
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - doppsy-internal

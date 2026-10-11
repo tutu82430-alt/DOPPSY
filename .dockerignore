@@ -1,0 +1,10 @@
+target/
+doppsy-web/
+.git/
+.gitignore
+.idea/
+*.iml
+.mvn/
+*.log
+docker-compose*.yml
+nginx/

@@ -84,6 +84,21 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ---
 
+## Production Cloud Deployment (Docker & Nginx)
+
+Run the full production stack (PostgreSQL, Spring Boot Backend, Next.js Frontend, and Nginx Gateway):
+
+```bash
+docker compose -f docker-compose.prod.yml up --build -d
+```
+
+- **Public Gateway**: [http://localhost](http://localhost) (Port 80/443 via Nginx)
+- **API Routing**: `/api/*` seamlessly proxied to the internal Spring Boot container (`backend:8080`)
+- **Web App**: `/*` served by the Next.js production server (`frontend:3000`)
+- **Isolated Network**: PostgreSQL and internal application ports are locked down and never exposed to the host machine.
+
+---
+
 ## Authentication & Test Credentials
 
 - **Default Test OTP**: `123456`
