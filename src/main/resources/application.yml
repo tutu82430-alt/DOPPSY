@@ -37,3 +37,13 @@ logging:
     com.doppsy: DEBUG
     org.hibernate.SQL: DEBUG
     org.hibernate.type.descriptor.sql: TRACE
+
+# ---------------------------------------------------------------------------
+# Doppsy custom config
+# ---------------------------------------------------------------------------
+doppsy:
+  jwt:
+    # Base64-encoded 256-bit secret — REPLACE in production via env var or Vault
+    secret: "ZG9wcHN5LXN1cGVyLXNlY3JldC1rZXktMjAyNi1kb3Bwc3ktaGVhbHRoY2FyZQ=="
+    expiration-ms: 86400000   # 24 hours
+  mock-otp: "123456"
