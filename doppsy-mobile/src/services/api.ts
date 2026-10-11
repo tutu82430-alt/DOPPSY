@@ -1,7 +1,7 @@
 import axios from 'axios'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { Platform } from 'react-native'
-import type { AuthResponse, DoctorResponse, BookingResponse, Specialty } from '../types'
+import type { AuthResponse, DoctorResponse, BookingResponse, Specialty, RosterItemResponse } from '../types'
 
 // ─── Base URL Resolution ──────────────────────────────────────────────────────
 // Android Emulator maps host machine localhost to 10.0.2.2
@@ -93,6 +93,46 @@ export async function bookAppointment(
     providerId,
     appointmentTimestamp: timestamp,
   })
+  return res.data
+}
+
+/**
+ * Fetches the authenticated doctor's full patient schedule for a specific date (defaults to today).
+ * GET /api/v1/doctor/roster
+ */
+export async function getDoctorRoster(
+  date?: string,
+  providerId?: string
+): Promise<RosterItemResponse[]> {
+  const params: Record<string, string> = {}
+  if (date) {
+    params.date = date
+  }
+  if (providerId) {
+    params.providerId = providerId
+  }
+  const res = await api.get<RosterItemResponse[]>('/api/v1/doctor/roster', { params })
+  return res.data
+}
+
+/**
+ * Updates an appointment's status on the doctor's roster (e.g. COMPLETED or NO_SHOW).
+ * PATCH /api/v1/doctor/appointments/{id}/status
+ */
+export async function updateAppointmentStatus(
+  id: string,
+  status: 'COMPLETED' | 'CANCELLED' | 'NO_SHOW',
+  providerId?: string
+): Promise<RosterItemResponse> {
+  const params: Record<string, string> = {}
+  if (providerId) {
+    params.providerId = providerId
+  }
+  const res = await api.patch<RosterItemResponse>(
+    `/api/v1/doctor/appointments/${id}/status`,
+    { status },
+    { params }
+  )
   return res.data
 }
 

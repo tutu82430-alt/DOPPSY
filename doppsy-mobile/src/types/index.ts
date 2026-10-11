@@ -55,3 +55,21 @@ export interface BookingResponse {
   bookingFee: number
   createdAt: string
 }
+
+// ─── Doctor Roster & Clinic Management Types ──────────────────────────────────
+
+export interface RosterItemResponse {
+  appointmentId: string
+  appointmentTimestamp: string
+  status: AppointmentStatus
+  patientName: string | null
+  patientAge: number | null
+  patientContact: string | null
+  patientUserId?: string | null
+  bookingFee: number
+  createdAt?: string
+}
+
+export interface UpdateAppointmentStatusRequest {
+  status: 'COMPLETED' | 'CANCELLED' | 'NO_SHOW'
+}

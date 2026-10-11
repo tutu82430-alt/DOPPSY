@@ -205,9 +205,19 @@ export default function PatientDashboardScreen() {
           <Text style={styles.greetingText}>Welcome back, {userName.split(' ')[0]}</Text>
         </View>
 
-        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout} activeOpacity={0.7}>
-          <Text style={styles.logoutButtonText}>Sign Out</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <TouchableOpacity
+            style={styles.doctorSwitchButton}
+            onPress={() => router.push('/doctor')}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.doctorSwitchButtonText}>Doctor View</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout} activeOpacity={0.7}>
+            <Text style={styles.logoutButtonText}>Sign Out</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Specialty Filter Scroll */}
@@ -327,6 +337,19 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#94A3B8',
     fontWeight: '600',
+  },
+  doctorSwitchButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#06B6D4',
+    backgroundColor: 'rgba(6, 182, 212, 0.12)',
+  },
+  doctorSwitchButtonText: {
+    fontSize: 12,
+    color: '#06B6D4',
+    fontWeight: '700',
   },
   filterSection: {
     paddingVertical: 12,
