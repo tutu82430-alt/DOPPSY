@@ -15,8 +15,12 @@ import com.doppsy.exception.UnauthorizedAccessException;
 import com.doppsy.repository.AppointmentRepository;
 import com.doppsy.repository.ProviderRepository;
 import com.doppsy.repository.UserRepository;
+import com.doppsy.config.RabbitMQConfig;
+import com.doppsy.event.SlotCancelledEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.File;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -39,6 +44,13 @@ public class AppointmentService {
     private final WhatsAppService whatsAppService;
     private final PaymentService paymentService;
     private final PdfGeneratorService pdfGeneratorService;
+    private final RabbitTemplate rabbitTemplate;
+
+    @Value("${doppsy.rabbitmq.exchange:" + RabbitMQConfig.EXCHANGE_SLOT_EVENTS + "}")
+    private String slotExchangeName = RabbitMQConfig.EXCHANGE_SLOT_EVENTS;
+
+    @Value("${doppsy.rabbitmq.routing-key:" + RabbitMQConfig.ROUTING_KEY_SLOT_CANCELLED + "}")
+    private String slotRoutingKey = RabbitMQConfig.ROUTING_KEY_SLOT_CANCELLED;
 
     /**
      * Step 1: Reserves a consultation slot as PENDING_PAYMENT and creates a Razorpay order
@@ -184,14 +196,100 @@ public class AppointmentService {
                 targetAppointment.getStatus()));
         }
 
-        targetAppointment.setStatus(AppointmentStatus.CANCELLED);
+        targetAppointment.setStatus(AppointmentStatus.AVAILABLE);
+        UUID previousUserId = targetAppointment.getUser() != null ? targetAppointment.getUser().getUserId() : requestingUserId;
+        targetAppointment.setUser(null);
         Appointment cancelledAppointment = appointmentRepository.save(targetAppointment);
 
-        log.info("Appointment cancelled successfully. AppointmentID: {}, UserID: {}",
+        log.info("Appointment cancelled and released to schedule. AppointmentID: {}, UserID: {}",
             appointmentId, requestingUserId);
+
+        // Publish SlotCancelledEvent to RabbitMQ to alert waitlisted patients
+        publishSlotCancelledEvent(cancelledAppointment, previousUserId);
 
         return toBookingResponse(cancelledAppointment, cancelledAppointment.getProvider());
     }
+
+    /**
+     * Cancels the patient's most recent BOOKED appointment via the WhatsApp webhook,
+     * releases the slot back to AVAILABLE, and publishes a SlotCancelledEvent to RabbitMQ.
+     */
+    @Transactional
+    public void cancelAppointmentViaWebhook(String senderMobile) {
+        if (senderMobile == null || senderMobile.isBlank()) {
+            log.warn("[WHATSAPP CANCELLATION] Discarded cancellation with null or blank mobile number");
+            return;
+        }
+
+        Optional<Appointment> bookedAppointmentOpt = appointmentRepository.findMostRecentBookedByMobile(senderMobile);
+
+        if (bookedAppointmentOpt.isEmpty()) {
+            log.warn("[WHATSAPP CANCELLATION] No active BOOKED appointment found to cancel for mobile: {}", senderMobile);
+            whatsAppService.sendMessage(
+                senderMobile,
+                "Doppsy Concierge: We could not find any active BOOKED appointment linked to your number. If you need assistance, reply HELP."
+            );
+            return;
+        }
+
+        Appointment appointment = bookedAppointmentOpt.get();
+        UUID previousUserId = appointment.getUser() != null ? appointment.getUser().getUserId() : null;
+        String doctorName = appointment.getProvider().getFullName();
+        String formattedSlotTime = appointment.getAppointmentTimestamp().format(
+            DateTimeFormatter.ofPattern("EEE, dd MMM 'at' hh:mm a")
+        );
+
+        // Release slot back to AVAILABLE for waitlist candidate claiming
+        appointment.setStatus(AppointmentStatus.AVAILABLE);
+        appointment.setUser(null);
+        appointment.setRazorpayOrderId(null);
+        appointment.setRazorpayPaymentId(null);
+        Appointment releasedAppointment = appointmentRepository.save(appointment);
+
+        log.info("[WHATSAPP CANCELLATION] Cancelled and released appointment {} for sender {} with Dr. {}",
+            releasedAppointment.getAppointmentId(), senderMobile, doctorName);
+
+        // Publish SlotCancelledEvent to RabbitMQ exchange
+        publishSlotCancelledEvent(releasedAppointment, previousUserId);
+
+        // Acknowledge patient on WhatsApp
+        String confirmationMsg = String.format(
+            "Doppsy Concierge: Your appointment with Dr. %s scheduled for %s has been CANCELLED successfully. Reply BOOK if you wish to reschedule.",
+            doctorName, formattedSlotTime
+        );
+        whatsAppService.sendMessage(senderMobile, confirmationMsg);
+    }
+
+    /**
+     * Publishes a SlotCancelledEvent to the RabbitMQ exchange to trigger the Smart Waitlist Engine.
+     */
+    public void publishSlotCancelledEvent(Appointment appointment, UUID previousUserId) {
+        if (appointment == null || appointment.getProvider() == null) {
+            log.warn("[RABBITMQ WAITLIST] Cannot publish SlotCancelledEvent: appointment or provider is null");
+            return;
+        }
+
+        try {
+            SlotCancelledEvent event = SlotCancelledEvent.builder()
+                .appointmentId(appointment.getAppointmentId())
+                .providerId(appointment.getProvider().getProviderId())
+                .doctorName(appointment.getProvider().getFullName())
+                .clinicName(appointment.getProvider().getClinicName())
+                .appointmentTimestamp(appointment.getAppointmentTimestamp())
+                .slotDate(appointment.getAppointmentTimestamp().toLocalDate())
+                .cancelledByUserId(previousUserId)
+                .cancelledAt(LocalDateTime.now())
+                .build();
+
+            rabbitTemplate.convertAndSend(slotExchangeName, slotRoutingKey, event);
+            log.info("[RABBITMQ WAITLIST] Published SlotCancelledEvent for AppointmentID: {}, ProviderID: {}, Date: {} to exchange: '{}'",
+                appointment.getAppointmentId(), appointment.getProvider().getProviderId(), event.getSlotDate(), slotExchangeName);
+        } catch (Exception amqpEx) {
+            log.error("[RABBITMQ WAITLIST ERROR] Failed to publish SlotCancelledEvent for AppointmentID: {}: {}",
+                appointment.getAppointmentId(), amqpEx.getMessage(), amqpEx);
+        }
+    }
+
 
     @Transactional(readOnly = true)
     public List<BookingResponse> getMyAppointments(UUID patientId) {

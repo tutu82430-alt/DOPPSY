@@ -32,7 +32,9 @@ public class WhatsAppWebhookService {
     private final WhatsAppService whatsappService;
     private final VoicePrescriptionService voicePrescriptionService;
     private final AppointmentService appointmentService;
+    private final WaitlistService waitlistService;
     private final ObjectMapper objectMapper;
+
 
     private static final DateTimeFormatter TIME_FMT =
         DateTimeFormatter.ofPattern("EEE, dd MMM 'at' hh:mm a");
@@ -184,45 +186,21 @@ public class WhatsAppWebhookService {
         String sanitizedText = (textBody != null) ? textBody.trim() : "";
         log.info("[WHATSAPP INBOUND] Processing text from {}: '{}'", senderMobile, sanitizedText);
 
-        // Case 1: CANCEL command
+        // Case 1: CANCEL command -> delegates to AppointmentService to release slot and publish SlotCancelledEvent to RabbitMQ
         if ("CANCEL".equalsIgnoreCase(sanitizedText)) {
-            handleCancellation(senderMobile);
+            appointmentService.cancelAppointmentViaWebhook(senderMobile);
             return;
         }
 
-        // Case 2: General inquiry fallback
-        String fallbackResponse = "Doppsy Concierge: We have received your message. Our clinical care team will reply shortly.";
+        // Case 2: CLAIM command -> Smart Waitlist Engine atomic acquisition with database lock
+        if ("CLAIM".equalsIgnoreCase(sanitizedText)) {
+            waitlistService.claimSlotByResponder(senderMobile);
+            return;
+        }
+
+        // Case 3: General inquiry fallback
+        String fallbackResponse = "Doppsy Concierge: We have received your message. Our clinical care team will reply shortly. Reply 'CANCEL' to cancel an appointment or 'CLAIM' to secure an opened waitlist slot.";
         whatsappService.sendMessage(senderMobile, fallbackResponse);
     }
-
-    /**
-     * Cancels the patient's most recent BOOKED appointment.
-     */
-    private void handleCancellation(String senderMobile) {
-        Optional<Appointment> bookedAppointmentOpt = appointmentRepository.findMostRecentBookedByMobile(senderMobile);
-
-        if (bookedAppointmentOpt.isEmpty()) {
-            log.warn("[WHATSAPP CONCIERGE] No active BOOKED appointment found to cancel for mobile: {}", senderMobile);
-            whatsappService.sendMessage(senderMobile,
-                "Doppsy Concierge: We could not find any active BOOKED appointment linked to your number. If you need assistance, reply HELP.");
-            return;
-        }
-
-        Appointment appointment = bookedAppointmentOpt.get();
-        appointment.setStatus(AppointmentStatus.CANCELLED);
-        appointmentRepository.save(appointment);
-
-        String doctorName = appointment.getProvider().getFullName();
-        String formattedSlotTime = appointment.getAppointmentTimestamp().format(TIME_FMT);
-
-        log.info("[WHATSAPP CONCIERGE] Cancelled appointment {} for sender {} with {}",
-            appointment.getAppointmentId(), senderMobile, doctorName);
-
-        String confirmationMsg = String.format(
-            "Doppsy Concierge: Your appointment with %s scheduled for %s has been CANCELLED successfully. Reply BOOK if you wish to reschedule.",
-            doctorName, formattedSlotTime
-        );
-
-        whatsappService.sendMessage(senderMobile, confirmationMsg);
-    }
 }
+

@@ -50,6 +50,14 @@ public class WhatsAppService {
      * Sends a plain text message to the specified recipient phone number.
      */
     public boolean sendMessage(String recipientMobile, String messageBody) {
+        return sendTextMessage(recipientMobile, messageBody);
+    }
+
+    /**
+     * Sends a plain text message to the specified recipient phone number.
+     */
+    public boolean sendTextMessage(String recipientMobile, String messageBody) {
+
         // Guard clause: validate inputs
         if (recipientMobile == null || recipientMobile.isBlank() || messageBody == null || messageBody.isBlank()) {
             log.warn("[WHATSAPP OUTBOUND] Aborted: recipient mobile or message body is empty");

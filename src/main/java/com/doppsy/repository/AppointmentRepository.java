@@ -147,6 +147,37 @@ public interface AppointmentRepository extends JpaRepository<Appointment, UUID> 
     );
 
     /**
+     * Acquires a PESSIMISTIC_WRITE row-level lock by provider and timestamp.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "5000"))
+    @Query("""
+        SELECT a FROM Appointment a
+        WHERE a.provider.providerId = :providerId
+          AND a.appointmentTimestamp = :timestamp
+        """)
+    Optional<Appointment> findByProviderAndTimestampForUpdate(
+        @Param("providerId") UUID providerId,
+        @Param("timestamp") LocalDateTime timestamp
+    );
+
+    /**
+     * Locks an appointment by its ID using a PESSIMISTIC_WRITE row-level lock.
+     * Critical for the Smart Waitlist Engine to ensure the first responder to 'CLAIM'
+     * acquires the slot atomically, preventing double-allocation race conditions.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "5000"))
+    @Query("""
+        SELECT a FROM Appointment a
+        JOIN FETCH a.provider p
+        LEFT JOIN FETCH a.user u
+        WHERE a.appointmentId = :appointmentId
+        """)
+    Optional<Appointment> findByIdForUpdate(@Param("appointmentId") UUID appointmentId);
+
+
+    /**
      * Finds the next {@code AVAILABLE} slot for a provider at or after the
      * requested time. Accelerated by the composite index
      * {@code (provider_id, status, appointment_timestamp)}.

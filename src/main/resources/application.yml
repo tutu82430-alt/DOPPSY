@@ -26,6 +26,18 @@ spring:
           time_zone: UTC
     open-in-view: false
 
+  rabbitmq:
+    host: ${SPRING_RABBITMQ_HOST:localhost}
+    port: ${SPRING_RABBITMQ_PORT:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:guest}
+    password: ${SPRING_RABBITMQ_PASSWORD:guest}
+    listener:
+      simple:
+        auto-startup: ${DOPPSY_RABBIT_LISTENER_AUTO_STARTUP:true}
+        concurrency: 2
+        max-concurrency: 5
+        prefetch: 1
+
 server:
   port: 8080
   error:
@@ -61,4 +73,8 @@ doppsy:
     api-url: "https://api.openai.com/v1"
     whisper-model: "whisper-1"
     chat-model: "gpt-4o-mini"
+  rabbitmq:
+    exchange: ${DOPPSY_RABBITMQ_EXCHANGE:doppsy.slot.exchange}
+    queue: ${DOPPSY_RABBITMQ_QUEUE:doppsy.slot.cancelled.queue}
+    routing-key: ${DOPPSY_RABBITMQ_ROUTING_KEY:slot.cancelled}
 

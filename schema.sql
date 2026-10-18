@@ -153,6 +153,44 @@ CREATE INDEX IF NOT EXISTS idx_hr_provider_id   ON health_records (provider_id);
 CREATE INDEX IF NOT EXISTS idx_hr_record_type   ON health_records (record_type);
 CREATE INDEX IF NOT EXISTS idx_hr_uploaded_at   ON health_records (uploaded_at DESC);
 
+-- -----------------------------------------------------------------------------
+-- TABLE: waitlists
+-- Smart Waitlist Engine: tracks patients queuing for cancellations with a specific doctor and date.
+-- When a slot opens, the top 3 waiting patients are notified to CLAIM it.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS waitlists (
+    waitlist_id             UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id                 UUID            NOT NULL
+                                            REFERENCES users(user_id)
+                                            ON DELETE CASCADE ON UPDATE CASCADE,
+    provider_id             UUID            NOT NULL
+                                            REFERENCES providers(provider_id)
+                                            ON DELETE CASCADE ON UPDATE CASCADE,
+    target_date             DATE            NOT NULL,
+    status                  VARCHAR(20)     NOT NULL DEFAULT 'WAITING'
+                                            CHECK (status IN ('WAITING', 'NOTIFIED', 'CLAIMED', 'EXPIRED', 'CANCELLED')),
+    notified_slot_id        UUID            REFERENCES appointments(appointment_id)
+                                            ON DELETE SET NULL ON UPDATE CASCADE,
+    notified_at             TIMESTAMP,
+    created_at              TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE  waitlists                     IS 'Smart Waitlist: patient FIFO queues for cancelled provider slots.';
+COMMENT ON COLUMN waitlists.waitlist_id         IS 'Surrogate primary key; UUID v4 auto-generated.';
+COMMENT ON COLUMN waitlists.user_id             IS 'FK to users; the patient waiting for an opening.';
+COMMENT ON COLUMN waitlists.provider_id         IS 'FK to providers; the doctor requested.';
+COMMENT ON COLUMN waitlists.target_date         IS 'Specific calendar date requested by the patient.';
+COMMENT ON COLUMN waitlists.status              IS 'WAITING (queue) -> NOTIFIED (claim in-flight) -> CLAIMED | EXPIRED | CANCELLED.';
+COMMENT ON COLUMN waitlists.notified_slot_id    IS 'FK to appointments; slot offered to this patient.';
+COMMENT ON COLUMN waitlists.notified_at         IS 'Timestamp when the opening alert was dispatched via WhatsApp.';
+COMMENT ON COLUMN waitlists.created_at          IS 'Timestamp when the patient joined the waitlist (determines FIFO priority).';
+
+-- Indexes for waitlist prioritization & lookup
+CREATE INDEX IF NOT EXISTS idx_waitlist_provider_date_status ON waitlists (provider_id, target_date, status, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_waitlist_user_status          ON waitlists (user_id, status);
+CREATE INDEX IF NOT EXISTS idx_waitlist_notified_slot        ON waitlists (notified_slot_id);
+
 -- =============================================================================
 -- END OF SCHEMA
 -- =============================================================================
+
