@@ -44,11 +44,11 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
-      - name: Fix Maven Wrapper Permissions
-        run: chmod +x mvnw
-
       - name: Build Spring Boot Backend
-        run: ./mvnw clean package -DskipTests
+        run: |
+          chmod +x mvnw
+          ./mvnw clean package -DskipTests
+
 
       # ── Frontend: Node.js 18 & Next.js Build ────────────────────────────────
       - name: Set up Node.js 18
