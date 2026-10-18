@@ -86,15 +86,15 @@ public class AppointmentController {
      */
     @PostMapping("/book")
     public ResponseEntity<BookingResponse> bookAppointment(
-        @Valid @RequestBody BookingRequest request,
+        @Valid @RequestBody BookingRequest bookingRequestPayload,
         HttpServletRequest httpRequest
     ) {
-        UUID userId = tokenExtractor.extractUserIdOrThrow(httpRequest);
-        log.info("[APPT] Book request — userId={}, providerId={}, time={}",
-            userId, request.getProviderId(), request.getAppointmentTimestamp());
+        UUID authenticatedPatientId = tokenExtractor.extractUserIdOrThrow(httpRequest);
+        log.info("[APPT] Inbound booking request from PatientID: {}, ProviderID: {}, Slot: {}",
+            authenticatedPatientId, bookingRequestPayload.getProviderId(), bookingRequestPayload.getAppointmentTimestamp());
 
-        BookingResponse response = appointmentService.bookAppointment(userId, request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        BookingResponse pendingBookingResponse = appointmentService.bookAppointment(authenticatedPatientId, bookingRequestPayload);
+        return ResponseEntity.status(HttpStatus.CREATED).body(pendingBookingResponse);
     }
 
     // -----------------------------------------------------------------------
@@ -103,40 +103,18 @@ public class AppointmentController {
 
     /**
      * Verifies the Razorpay payment callback and promotes the appointment to BOOKED.
-     *
-     * <p>The client must send the three Razorpay callback fields after the checkout
-     * completes successfully. The backend verifies the HMAC SHA256 signature to
-     * ensure the payment is authentic.</p>
-     *
-     * <pre>
-     * Request:
-     *   POST /api/v1/appointments/verify-payment
-     *   Authorization: Bearer &lt;token&gt;
-     *   Content-Type: application/json
-     *   {
-     *     "razorpayOrderId":   "order_Abc123XyZ",
-     *     "razorpayPaymentId": "pay_Abc123XyZ",
-     *     "razorpaySignature": "hmac_sha256_signature_string"
-     *   }
-     *
-     * Response 200 OK:
-     *   { ...BookingResponse with status: "BOOKED"... }
-     * </pre>
-     *
-     * @param request     Razorpay payment verification details
-     * @param httpRequest raw HTTP request for JWT extraction
-     * @return 200 OK with {@link BookingResponse} in BOOKED state
      */
     @PostMapping("/verify-payment")
     public ResponseEntity<BookingResponse> verifyPayment(
-        @Valid @RequestBody VerifyPaymentRequest request,
+        @Valid @RequestBody VerifyPaymentRequest paymentVerificationPayload,
         HttpServletRequest httpRequest
     ) {
-        UUID userId = tokenExtractor.extractUserIdOrThrow(httpRequest);
-        log.info("[APPT] Verify payment — userId={}, orderId={}", userId, request.getRazorpayOrderId());
+        UUID authenticatedPatientId = tokenExtractor.extractUserIdOrThrow(httpRequest);
+        log.info("[APPT] Inbound payment verification from PatientID: {}, Razorpay OrderID: {}",
+            authenticatedPatientId, paymentVerificationPayload.getRazorpayOrderId());
 
-        BookingResponse response = appointmentService.verifyPaymentAndConfirm(request);
-        return ResponseEntity.ok(response);
+        BookingResponse confirmedBookingResponse = appointmentService.verifyPaymentAndConfirm(paymentVerificationPayload);
+        return ResponseEntity.ok(confirmedBookingResponse);
     }
 
     // -----------------------------------------------------------------------

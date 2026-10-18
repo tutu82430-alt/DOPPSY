@@ -112,34 +112,37 @@ export async function getDoctors(specialty?: Specialty | '', location?: string):
  * Books a time slot with a given provider.
  * JWT is automatically attached from localStorage.
  */
-export async function bookAppointment(providerId: string, timestamp: string): Promise<BookingResponse> {
-  const res = await fetch(`${API_BASE}/api/v1/appointments/book`, {
+export async function bookAppointment(
+  providerId: string,
+  appointmentTimestamp: string
+): Promise<BookingResponse> {
+  const rawApiResponse = await fetch(`${API_BASE}/api/v1/appointments/book`, {
     method: 'POST',
     headers: authHeaders(),
-    body: JSON.stringify({ providerId, appointmentTimestamp: timestamp }),
+    body: JSON.stringify({ providerId, appointmentTimestamp }),
   })
-  return handleResponse<BookingResponse>(res)
+  return handleResponse<BookingResponse>(rawApiResponse)
 }
 
 /**
  * Returns all appointments for the authenticated patient, newest first.
  */
 export async function getMyAppointments(): Promise<BookingResponse[]> {
-  const res = await fetch(`${API_BASE}/api/v1/appointments/me`, {
+  const rawApiResponse = await fetch(`${API_BASE}/api/v1/appointments/me`, {
     headers: authHeaders(),
   })
-  return handleResponse<BookingResponse[]>(res)
+  return handleResponse<BookingResponse[]>(rawApiResponse)
 }
 
 /**
  * Cancels a booked appointment.
  */
 export async function cancelAppointment(appointmentId: string): Promise<BookingResponse> {
-  const res = await fetch(`${API_BASE}/api/v1/appointments/${appointmentId}/cancel`, {
+  const rawApiResponse = await fetch(`${API_BASE}/api/v1/appointments/${appointmentId}/cancel`, {
     method: 'PATCH',
     headers: authHeaders(),
   })
-  return handleResponse<BookingResponse>(res)
+  return handleResponse<BookingResponse>(rawApiResponse)
 }
 
 /**
@@ -151,12 +154,12 @@ export async function verifyPayment(
   razorpayPaymentId: string,
   razorpaySignature: string
 ): Promise<BookingResponse> {
-  const res = await fetch(`${API_BASE}/api/v1/appointments/verify-payment`, {
+  const rawApiResponse = await fetch(`${API_BASE}/api/v1/appointments/verify-payment`, {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify({ razorpayOrderId, razorpayPaymentId, razorpaySignature }),
   })
-  return handleResponse<BookingResponse>(res)
+  return handleResponse<BookingResponse>(rawApiResponse)
 }
 
 // ─── Doctor Roster & Clinic Management ────────────────────────────────────────

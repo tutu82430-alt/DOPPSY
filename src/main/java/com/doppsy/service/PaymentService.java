@@ -1,28 +1,19 @@
 package com.doppsy.service;
 
+import com.doppsy.exception.PaymentSignatureMismatchException;
+import com.doppsy.exception.RazorpayOrderCreationException;
 import com.razorpay.Order;
 import com.razorpay.RazorpayClient;
 import com.razorpay.RazorpayException;
 import com.razorpay.Utils;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import jakarta.annotation.PostConstruct;
+import java.util.UUID;
 
-/**
- * Encapsulates all Razorpay API interactions for the Doppsy booking deposit flow.
- *
- * <h3>Responsibilities</h3>
- * <ul>
- *   <li>Create a Razorpay {@link Order} for the ₹200 booking deposit.</li>
- *   <li>Verify the HMAC SHA256 signature returned by the client after payment.</li>
- * </ul>
- *
- * <p>Configuration is loaded from {@code application.yml} under the {@code doppsy.razorpay}
- * prefix, with environment-variable overrides supported for production deployments.</p>
- */
 @Slf4j
 @Service
 public class PaymentService {
@@ -33,104 +24,125 @@ public class PaymentService {
     @Value("${doppsy.razorpay.key-secret}")
     private String razorpayKeySecret;
 
-    @Value("${doppsy.razorpay.booking-deposit-paise}")
+    @Value("${doppsy.razorpay.booking-deposit-paise:20000}")
     private int bookingDepositPaise;
 
     private RazorpayClient razorpayClient;
 
     @PostConstruct
     public void init() {
+        // Fallback to test mock mode if default placeholder is configured
         if ("rzp_test_REPLACE_ME".equals(razorpayKeyId)) {
-            log.warn("[PAYMENT] Using placeholder Razorpay credentials. In-memory mock orders enabled until RAZORPAY_KEY_ID is provided.");
+            log.warn("[PAYMENT-INIT] Running in test mode. Real gateway calls will mock order generation.");
             return;
         }
+
         try {
             this.razorpayClient = new RazorpayClient(razorpayKeyId, razorpayKeySecret);
-            log.info("[PAYMENT] RazorpayClient initialised — keyId={}…, deposit=₹{}",
-                razorpayKeyId.substring(0, Math.min(12, razorpayKeyId.length())),
-                bookingDepositPaise / 100);
-        } catch (RazorpayException e) {
-            log.error("[PAYMENT] Failed to initialise RazorpayClient: {}", e.getMessage());
+            log.info("[PAYMENT-INIT] Razorpay client successfully initialized for keyId prefix: {}",
+                razorpayKeyId.substring(0, Math.min(8, razorpayKeyId.length())));
+        } catch (RazorpayException gatewayEx) {
+            log.error("[PAYMENT-INIT] Failed to initialize Razorpay SDK client: {}", gatewayEx.getMessage());
+            throw new RazorpayOrderCreationException("Unable to configure Razorpay gateway client", gatewayEx);
         }
     }
 
-    /**
-     * Returns the public Razorpay Key ID for the frontend checkout script.
-     */
     public String getRazorpayKeyId() {
         return razorpayKeyId;
     }
 
     /**
-     * Creates a Razorpay order for the booking deposit.
-     *
-     * @param appointmentId  the Doppsy appointment UUID (used as internal receipt)
-     * @param patientName    the patient's display name (shown on Razorpay checkout)
-     * @return Razorpay Order ID (e.g. {@code order_Abc123XyZ})
-     * @throws RazorpayException if Razorpay API call fails
+     * Creates a Razorpay order for the ₹200 patient booking deposit.
+     * Note: Razorpay expects the amount in base currency (paise), so ₹200 = 20000 paise.
      */
-    public String createOrder(String appointmentId, String patientName) throws RazorpayException {
-        if ("rzp_test_REPLACE_ME".equals(razorpayKeyId) || razorpayClient == null) {
-            String mockOrderId = "order_mock_" + appointmentId.replace("-", "").substring(0, 14);
-            log.info("[PAYMENT] Placeholder Razorpay key detected — generating mock orderId={}", mockOrderId);
-            return mockOrderId;
+    public String createBookingDepositOrder(UUID appointmentId, UUID patientId, UUID providerId, String patientDisplayName) {
+        // Guard clause: validate appointment and entity identifiers
+        if (appointmentId == null || patientId == null || providerId == null) {
+            throw new IllegalArgumentException("AppointmentID, PatientID, and ProviderID are required to initiate deposit");
         }
 
-        JSONObject orderRequest = new JSONObject();
-        orderRequest.put("amount", bookingDepositPaise);       // ₹200 = 20000 paise
-        orderRequest.put("currency", "INR");
-        orderRequest.put("receipt", "appt_" + appointmentId);
-        orderRequest.put("payment_capture", 1);                // auto-capture
+        log.info("Initiating ₹200 deposit for PatientID: {}, ProviderID: {}, AppointmentID: {}",
+            patientId, providerId, appointmentId);
 
-        JSONObject notes = new JSONObject();
-        notes.put("appointmentId", appointmentId);
-        notes.put("patientName", patientName);
-        notes.put("purpose", "Booking Deposit");
-        orderRequest.put("notes", notes);
-
-        Order order = razorpayClient.orders.create(orderRequest);
-        String orderId = order.get("id");
-
-        log.info("[PAYMENT] Razorpay order created — orderId={}, appointmentId={}, amount=₹{}",
-            orderId, appointmentId, bookingDepositPaise / 100);
-        return orderId;
-    }
-
-    /**
-     * Verifies the Razorpay payment signature using HMAC SHA256.
-     *
-     * <p>The expected signature is computed as:
-     * {@code HMAC_SHA256(orderId + "|" + paymentId, keySecret)}</p>
-     *
-     * @param orderId   the Razorpay order ID
-     * @param paymentId the Razorpay payment ID
-     * @param signature the signature string from the client callback
-     * @return {@code true} if signature is valid; {@code false} otherwise
-     */
-    public boolean verifyPaymentSignature(String orderId, String paymentId, String signature) {
-        // Allow mock/simulator testing in local dev environments
-        if ("REPLACE_ME_WITH_RAZORPAY_SECRET".equals(razorpayKeySecret)
-                || "mock_signature".equals(signature)
-                || "simulated_mobile_signature".equals(signature)) {
-            log.info("[PAYMENT] Test/Mock mode detected — signature auto-verified for orderId={}, paymentId={}",
-                orderId, paymentId);
-            return true;
+        // Local development stub when testing without live sandbox credentials
+        if ("rzp_test_REPLACE_ME".equals(razorpayKeyId) || razorpayClient == null) {
+            String simulatedOrderId = "order_mock_" + appointmentId.toString().replace("-", "").substring(0, 14);
+            log.info("Test mode enabled — returning simulated Razorpay OrderID: {}", simulatedOrderId);
+            return simulatedOrderId;
         }
 
         try {
-            JSONObject attributes = new JSONObject();
-            attributes.put("razorpay_order_id", orderId);
-            attributes.put("razorpay_payment_id", paymentId);
-            attributes.put("razorpay_signature", signature);
+            JSONObject orderPayload = new JSONObject();
+            // Note: Razorpay expects the amount in base currency (paise), so multiply by 100
+            orderPayload.put("amount", bookingDepositPaise);
+            orderPayload.put("currency", "INR");
+            orderPayload.put("receipt", "txn_appt_" + appointmentId);
+            orderPayload.put("payment_capture", 1); // Auto-capture payment upon authorization
 
-            Utils.verifyPaymentSignature(attributes, razorpayKeySecret);
+            JSONObject trackingMetadata = new JSONObject();
+            trackingMetadata.put("appointmentId", appointmentId.toString());
+            trackingMetadata.put("patientId", patientId.toString());
+            trackingMetadata.put("providerId", providerId.toString());
+            trackingMetadata.put("patientName", patientDisplayName != null ? patientDisplayName : "Patient");
+            trackingMetadata.put("depositPurpose", "NO_SHOW_PREVENTION_DEPOSIT");
+            orderPayload.put("notes", trackingMetadata);
 
-            log.info("[PAYMENT] Signature verified — orderId={}, paymentId={}", orderId, paymentId);
-            return true;
-        } catch (RazorpayException e) {
-            log.warn("[PAYMENT] Signature verification FAILED — orderId={}, paymentId={}, error={}",
-                orderId, paymentId, e.getMessage());
-            return false;
+            Order gatewayOrder = razorpayClient.orders.create(orderPayload);
+            String razorpayOrderId = gatewayOrder.get("id");
+
+            log.info("Razorpay order successfully created. OrderID: {}, AppointmentID: {}, AmountPaise: {}",
+                razorpayOrderId, appointmentId, bookingDepositPaise);
+            return razorpayOrderId;
+
+        } catch (RazorpayException gatewayEx) {
+            log.error("Failed to generate Razorpay order for AppointmentID: {}, Error: {}",
+                appointmentId, gatewayEx.getMessage(), gatewayEx);
+            throw new RazorpayOrderCreationException("Razorpay gateway order creation failed: " + gatewayEx.getMessage(), gatewayEx);
+        }
+    }
+
+    /**
+     * Verifies the cryptographic HMAC SHA256 payment signature received from client callback.
+     * Expected payload: HMAC_SHA256(order_id + "|" + payment_id, secret)
+     */
+    public void verifyPaymentSignature(String razorpayOrderId, String razorpayPaymentId, String razorpaySignature) {
+        // Guard clauses: ensure all three verification tokens are present
+        if (razorpayOrderId == null || razorpayOrderId.isBlank()) {
+            throw new PaymentSignatureMismatchException("Razorpay OrderID is missing from verification payload");
+        }
+        if (razorpayPaymentId == null || razorpayPaymentId.isBlank()) {
+            throw new PaymentSignatureMismatchException(razorpayOrderId, "Razorpay PaymentID is missing from verification payload");
+        }
+        if (razorpaySignature == null || razorpaySignature.isBlank()) {
+            throw new PaymentSignatureMismatchException(razorpayOrderId, "Razorpay Signature is missing from verification payload");
+        }
+
+        // Allow mock signatures during local simulator / automated integration test runs
+        if ("REPLACE_ME_WITH_RAZORPAY_SECRET".equals(razorpayKeySecret)
+                || "mock_signature".equals(razorpaySignature)
+                || "simulated_mobile_signature".equals(razorpaySignature)) {
+            log.info("Local environment bypass: Verified signature for OrderID: {}, PaymentID: {}",
+                razorpayOrderId, razorpayPaymentId);
+            return;
+        }
+
+        try {
+            JSONObject signatureValidationPayload = new JSONObject();
+            signatureValidationPayload.put("razorpay_order_id", razorpayOrderId);
+            signatureValidationPayload.put("razorpay_payment_id", razorpayPaymentId);
+            signatureValidationPayload.put("razorpay_signature", razorpaySignature);
+
+            Utils.verifyPaymentSignature(signatureValidationPayload, razorpayKeySecret);
+
+            log.info("Razorpay payment signature verified successfully for OrderID: {}, PaymentID: {}",
+                razorpayOrderId, razorpayPaymentId);
+
+        } catch (RazorpayException signatureEx) {
+            // Enterprise security audit log for tampered transactions
+            log.error("PAYMENT TAMPERED: Invalid Razorpay HMAC signature for OrderID: {}, PaymentID: {}",
+                razorpayOrderId, razorpayPaymentId);
+            throw new PaymentSignatureMismatchException(razorpayOrderId,
+                "Cryptographic HMAC signature validation failed for Razorpay OrderID: " + razorpayOrderId);
         }
     }
 }

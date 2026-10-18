@@ -190,109 +190,135 @@ function BookModal({
   doctor: DoctorResponse
   patientName: string
   onClose: () => void
-  onBooked: (r: BookingResponse) => void
+  onBooked: (confirmedAppointment: BookingResponse) => void
 }) {
-  const [timestamp, setTimestamp] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [stage, setStage] = useState<'idle' | 'creating_order' | 'awaiting_payment' | 'verifying'>('idle')
-  const [err, setErr] = useState('')
+  const [selectedSlotTimestamp, setSelectedSlotTimestamp] = useState('')
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [checkoutStage, setCheckoutStage] = useState<'idle' | 'generating_order' | 'awaiting_signature' | 'verifying_hmac'>('idle')
+  const [checkoutError, setCheckoutError] = useState<string | null>(null)
 
-  const minDate = new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 16)
+  const minimumBookingDate = new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 16)
 
-  async function submit(e: React.FormEvent) {
+  // ── Modular Razorpay payment verification callback ─────────────────────────
+  async function handlePaymentSuccess(paymentVerificationPayload: {
+    razorpay_order_id: string
+    razorpay_payment_id: string
+    razorpay_signature: string
+  }) {
+    // Guard clause: ensure valid signature tokens
+    if (!paymentVerificationPayload.razorpay_payment_id || !paymentVerificationPayload.razorpay_signature) {
+      setCheckoutError('Incomplete payment authorization callback received from Razorpay.')
+      setIsProcessing(false)
+      setCheckoutStage('idle')
+      return
+    }
+
+    setCheckoutStage('verifying_hmac')
+    try {
+      // Server-side HMAC SHA256 cryptographic verification
+      const verifiedAppointment = await verifyPayment(
+        paymentVerificationPayload.razorpay_order_id,
+        paymentVerificationPayload.razorpay_payment_id,
+        paymentVerificationPayload.razorpay_signature
+      )
+
+      onBooked(verifiedAppointment)
+      onClose()
+    } catch (verificationException: unknown) {
+      const errorMessage = verificationException instanceof Error
+        ? verificationException.message
+        : 'Payment verification failed. Please contact Doppsy Support with your Payment ID.'
+      setCheckoutError(errorMessage)
+      setIsProcessing(false)
+      setCheckoutStage('idle')
+    }
+  }
+
+  async function handleInitiateBooking(e: React.FormEvent) {
     e.preventDefault()
-    if (!timestamp) { setErr('Please select a date and time'); return }
-    setErr('')
-    setLoading(true)
-    setStage('creating_order')
+
+    // Guard clause: validate slot selection
+    if (!selectedSlotTimestamp) {
+      setCheckoutError('Please select a valid consultation date and time.')
+      return
+    }
+
+    setCheckoutError(null)
+    setIsProcessing(true)
+    setCheckoutStage('generating_order')
 
     try {
-      // 1. Ensure Razorpay checkout script is loaded
-      const scriptLoaded = await loadRazorpayScript()
-      if (!scriptLoaded) {
-        throw new Error('Could not load Razorpay payment SDK. Please check your internet connection.')
+      // 1. Dynamically inject Razorpay Checkout SDK if not yet loaded
+      const isSdkLoaded = await loadRazorpayScript()
+      if (!isSdkLoaded) {
+        throw new Error('Unable to connect to Razorpay payment network. Please check your internet connection.')
       }
 
-      // 2. Call backend /api/v1/appointments/book -> returns PENDING_PAYMENT + razorpayOrderId
-      const bookingRes = await bookAppointment(doctor.providerId, timestamp + ':00')
+      // 2. Reserve slot on backend -> status: PENDING_PAYMENT + returns Razorpay OrderID
+      const pendingBookingResponse = await bookAppointment(doctor.providerId, selectedSlotTimestamp + ':00')
 
-      if (!bookingRes.razorpayOrderId) {
-        // Fallback if Razorpay mock or zero-fee
-        onBooked(bookingRes)
+      // Guard clause: fallback if zero-fee or mock test mode returned immediate confirmation
+      if (!pendingBookingResponse.razorpayOrderId) {
+        onBooked(pendingBookingResponse)
         onClose()
         return
       }
 
-      setStage('awaiting_payment')
+      setCheckoutStage('awaiting_signature')
 
-      // 3. Open Razorpay Checkout Modal
-      const options = {
-        key: bookingRes.razorpayKeyId || 'rzp_test_REPLACE_ME',
-        amount: (bookingRes.bookingFee ? bookingRes.bookingFee * 100 : 20000), // ₹200 deposit in paise
+      // Note: Razorpay expects the amount in base currency (paise), so multiply by 100
+      const depositAmountInPaise = pendingBookingResponse.bookingFee
+        ? Math.round(pendingBookingResponse.bookingFee * 100)
+        : 20000 // default ₹200 deposit
+
+      // 3. Configure Razorpay Standard Checkout options
+      const razorpayCheckoutOptions = {
+        key: pendingBookingResponse.razorpayKeyId || 'rzp_test_REPLACE_ME',
+        amount: depositAmountInPaise,
         currency: 'INR',
         name: 'Doppsy Healthcare Concierge',
         description: `₹200 Booking Deposit - Dr. ${doctor.fullName}`,
-        order_id: bookingRes.razorpayOrderId,
+        order_id: pendingBookingResponse.razorpayOrderId,
         prefill: {
           name: patientName || '',
         },
         notes: {
-          appointmentId: bookingRes.appointmentId,
+          appointmentId: pendingBookingResponse.appointmentId,
           providerId: doctor.providerId,
           clinicName: doctor.clinicName,
         },
         theme: {
-          color: '#06b6d4', // Cyan brand gradient accent
+          color: '#06b6d4', // Doppsy brand cyan
         },
-        handler: async function (response: {
-          razorpay_payment_id: string
-          razorpay_order_id: string
-          razorpay_signature: string
-        }) {
-          setStage('verifying')
-          try {
-            // 4. Server-side HMAC SHA256 verification
-            const verified = await verifyPayment(
-              response.razorpay_order_id,
-              response.razorpay_payment_id,
-              response.razorpay_signature
-            )
-            onBooked(verified)
-            onClose()
-          } catch (verifyErr: unknown) {
-            setErr(verifyErr instanceof Error ? verifyErr.message : 'Payment verification failed.')
-            setLoading(false)
-            setStage('idle')
-          }
-        },
+        handler: handlePaymentSuccess,
         modal: {
           ondismiss: function () {
-            setLoading(false)
-            setStage('idle')
-            setErr('Payment was cancelled. Your slot is held in pending status.')
+            setIsProcessing(false)
+            setCheckoutStage('idle')
+            setCheckoutError('Payment cancelled. Your consultation slot is held in pending status.')
           },
         },
       }
 
-      const rzpWindow = window as unknown as {
-        Razorpay: new (opts: typeof options) => {
+      const razorpayWindow = window as unknown as {
+        Razorpay: new (options: typeof razorpayCheckoutOptions) => {
           open: () => void
-          on: (evt: string, cb: (r: { error?: { description?: string } }) => void) => void
+          on: (event: string, callback: (failurePayload: { error?: { description?: string } }) => void) => void
         }
       }
 
-      const rzp = new rzpWindow.Razorpay(options)
-      rzp.on('payment.failed', function (resp) {
-        setErr(resp.error?.description || 'Payment was declined or failed. Please try again.')
-        setLoading(false)
-        setStage('idle')
+      const checkoutInstance = new razorpayWindow.Razorpay(razorpayCheckoutOptions)
+      checkoutInstance.on('payment.failed', function (failurePayload) {
+        setCheckoutError(failurePayload.error?.description || 'Payment was declined. Please try another payment method.')
+        setIsProcessing(false)
+        setCheckoutStage('idle')
       })
-      rzp.open()
+      checkoutInstance.open()
 
-    } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : 'Booking initiation failed')
-      setLoading(false)
-      setStage('idle')
+    } catch (initiationError: unknown) {
+      setCheckoutError(initiationError instanceof Error ? initiationError.message : 'Slot reservation failed')
+      setIsProcessing(false)
+      setCheckoutStage('idle')
     }
   }
 
@@ -304,12 +330,12 @@ function BookModal({
             <h3 className="text-lg font-bold text-white">{doctor.fullName}</h3>
             <p className="text-sm text-slate-400">{doctor.clinicName} · {doctor.location}</p>
           </div>
-          <button onClick={onClose} disabled={loading} className="text-slate-500 hover:text-white transition-colors">
+          <button onClick={onClose} disabled={isProcessing} className="text-slate-500 hover:text-white transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <form onSubmit={submit} className="space-y-4">
+        <form onSubmit={handleInitiateBooking} className="space-y-4">
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">
               Appointment Date &amp; Time
@@ -317,12 +343,12 @@ function BookModal({
             <input
               id="appointment-datetime"
               type="datetime-local"
-              min={minDate}
-              value={timestamp}
-              onChange={(e) => { setTimestamp(e.target.value); setErr('') }}
+              min={minimumBookingDate}
+              value={selectedSlotTimestamp}
+              onChange={(e) => { setSelectedSlotTimestamp(e.target.value); setCheckoutError(null) }}
               className="input-field"
               required
-              disabled={loading}
+              disabled={isProcessing}
             />
           </div>
 
@@ -341,21 +367,21 @@ function BookModal({
             </div>
           </div>
 
-          {err && (
-            <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{err}</p>
+          {checkoutError && (
+            <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{checkoutError}</p>
           )}
 
           <button
             id="confirm-booking-btn"
             type="submit"
-            disabled={loading}
+            disabled={isProcessing}
             className="btn-primary w-full py-3.5 font-semibold text-sm flex items-center justify-center gap-2"
           >
-            {stage === 'creating_order' ? (
+            {checkoutStage === 'generating_order' ? (
               <><Loader2 className="w-4 h-4 animate-spin" /> Preparing Payment…</>
-            ) : stage === 'awaiting_payment' ? (
+            ) : checkoutStage === 'awaiting_signature' ? (
               <><Loader2 className="w-4 h-4 animate-spin" /> Awaiting Razorpay Completion…</>
-            ) : stage === 'verifying' ? (
+            ) : checkoutStage === 'verifying_hmac' ? (
               <><Loader2 className="w-4 h-4 animate-spin" /> Verifying Payment…</>
             ) : (
               <>Confirm &amp; Pay ₹200 Deposit <Zap className="w-4 h-4" /></>

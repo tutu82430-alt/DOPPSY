@@ -74,57 +74,120 @@ export default function PatientDashboardScreen() {
     fetchDoctors()
   }, [fetchDoctors])
 
-  // Book Zero-Wait Slot
-  async function handleBookSlot(doctor: DoctorResponse) {
-    setBookingProviderId(doctor.providerId)
+  // ── Navigate to booking confirmation screen ────────────────────────────────
+  function navigateToConfirmation(confirmedBooking: BookingResponse) {
+    router.push({
+      pathname: '/confirmation',
+      params: {
+        appointmentId: confirmedBooking.appointmentId,
+        providerName: confirmedBooking.providerName,
+        clinicName: confirmedBooking.clinicName,
+        appointmentTimestamp: confirmedBooking.appointmentTimestamp,
+        bookingFee: (confirmedBooking.bookingFee || 200).toString(),
+        razorpayOrderId: confirmedBooking.razorpayOrderId || '',
+      },
+    })
+  }
+
+  // ── Book Zero-Wait Slot with Razorpay Deposit ────────────────────────────────
+  async function handleBookSlot(selectedDoctor: DoctorResponse) {
+    // Guard clause: prevent concurrent duplicate clicks
+    if (bookingProviderId) {
+      return
+    }
+
+    setBookingProviderId(selectedDoctor.providerId)
 
     // Schedule 24 hours from current time rounded to the next hour
-    const appointmentDate = new Date()
-    appointmentDate.setDate(appointmentDate.getDate() + 1)
-    appointmentDate.setMinutes(0, 0, 0)
-    const timestampIso = appointmentDate.toISOString().replace('.000Z', '')
-
-    const formattedTime = appointmentDate.toLocaleDateString('en-IN', {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
+    const scheduledSlotDate = new Date()
+    scheduledSlotDate.setDate(scheduledSlotDate.getDate() + 1)
+    scheduledSlotDate.setMinutes(0, 0, 0)
+    const slotTimestampIso = scheduledSlotDate.toISOString().replace('.000Z', '')
 
     try {
-      // Step 1: Initiate booking on backend — returns PENDING_PAYMENT status and Razorpay Order ID
-      const booking = await bookAppointment(doctor.providerId, timestampIso)
+      // Step 1: Initiate booking on backend — returns status PENDING_PAYMENT + Razorpay Order ID
+      const pendingBookingTxn = await bookAppointment(selectedDoctor.providerId, slotTimestampIso)
 
-      // Step 2: Open Razorpay Payment Modal for the ₹200 deposit
-      setPendingBooking(booking)
+      // Guard clause: fallback if zero-fee or immediate confirmation
+      if (!pendingBookingTxn.razorpayOrderId) {
+        navigateToConfirmation(pendingBookingTxn)
+        return
+      }
+
+      // Step 2: Configure native Razorpay checkout options
+      // Note: Razorpay expects the amount in base currency (paise), so multiply by 100
+      const depositAmountInPaise = pendingBookingTxn.bookingFee
+        ? Math.round(pendingBookingTxn.bookingFee * 100)
+        : 20000 // default ₹200 booking deposit
+
+      const razorpayCheckoutOptions = {
+        description: `₹200 Booking Deposit - Dr. ${selectedDoctor.fullName}`,
+        image: 'https://doppsy.com/brand/logo.png',
+        currency: 'INR',
+        key: pendingBookingTxn.razorpayKeyId || 'rzp_test_REPLACE_ME',
+        amount: depositAmountInPaise,
+        name: 'Doppsy Healthcare Concierge',
+        order_id: pendingBookingTxn.razorpayOrderId,
+        prefill: {
+          name: userName || 'Patient',
+          contact: '9999999999',
+          email: 'patient@doppsy.com',
+        },
+        theme: { color: '#06B6D4' },
+      }
+
+      // Step 3: Launch Native Razorpay Checkout with try/catch dismissal handling
+      let nativeRazorpayModule: { open: (options: Record<string, unknown>) => Promise<{ razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }> } | null = null
+      try {
+        const rzp = require('react-native-razorpay')
+        nativeRazorpayModule = rzp.default || rzp
+      } catch {
+        // Native module not linked (e.g. running inside Expo Go client)
+        nativeRazorpayModule = null
+      }
+
+      if (nativeRazorpayModule && typeof nativeRazorpayModule.open === 'function') {
+        try {
+          const paymentAuthorizationResponse = await nativeRazorpayModule.open(razorpayCheckoutOptions)
+
+          // Step 4: Verify cryptographic HMAC SHA256 signature on backend
+          const confirmedBooking = await verifyPayment(
+            paymentAuthorizationResponse.razorpay_order_id || pendingBookingTxn.razorpayOrderId,
+            paymentAuthorizationResponse.razorpay_payment_id,
+            paymentAuthorizationResponse.razorpay_signature
+          )
+
+          navigateToConfirmation(confirmedBooking)
+          return
+        } catch (checkoutError: any) {
+          // Graceful handling for user cancellation or back button
+          if (checkoutError?.code === 0 || checkoutError?.description?.toLowerCase().includes('cancel') || checkoutError?.description?.toLowerCase().includes('dismiss')) {
+            console.warn('User dismissed the payment modal')
+            return
+          }
+          console.warn('Native Razorpay error, falling back to sheet:', checkoutError)
+        }
+      }
+
+      // Fallback: Open in-app payment sheet (for Expo Go / simulators)
+      setPendingBooking(pendingBookingTxn)
       setShowPaymentModal(true)
-    } catch (err: unknown) {
-      const errorMsg =
-        err instanceof Error ? err.message : 'Unable to initiate zero-wait booking.'
-      Alert.alert('Booking Error', errorMsg)
+
+    } catch (bookingInitiationError: unknown) {
+      const errorMessage = bookingInitiationError instanceof Error
+        ? bookingInitiationError.message
+        : 'Unable to initiate zero-wait booking.'
+      Alert.alert('Booking Error', errorMessage)
     } finally {
       setBookingProviderId(null)
     }
   }
 
-  // Handle Successful Razorpay Verification
+  // Handle Successful Razorpay Verification from in-app modal
   function handlePaymentSuccess(verifiedBooking: BookingResponse) {
     setShowPaymentModal(false)
     setPendingBooking(null)
-
-    // Navigate to Confirmation Screen with booking parameters
-    router.push({
-      pathname: '/confirmation',
-      params: {
-        appointmentId: verifiedBooking.appointmentId,
-        providerName: verifiedBooking.providerName,
-        clinicName: verifiedBooking.clinicName,
-        appointmentTimestamp: verifiedBooking.appointmentTimestamp,
-        bookingFee: (verifiedBooking.bookingFee || 200).toString(),
-        razorpayOrderId: verifiedBooking.razorpayOrderId || '',
-      },
-    })
+    navigateToConfirmation(verifiedBooking)
   }
 
   // Handle Logout

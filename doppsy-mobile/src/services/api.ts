@@ -87,13 +87,13 @@ export async function getDoctors(specialty?: Specialty | string): Promise<Doctor
  */
 export async function bookAppointment(
   providerId: string,
-  timestamp: string
+  appointmentTimestamp: string
 ): Promise<BookingResponse> {
-  const res = await api.post<BookingResponse>('/api/v1/appointments/book', {
+  const bookingApiResponse = await api.post<BookingResponse>('/api/v1/appointments/book', {
     providerId,
-    appointmentTimestamp: timestamp,
+    appointmentTimestamp,
   })
-  return res.data
+  return bookingApiResponse.data
 }
 
 /**
@@ -105,12 +105,12 @@ export async function verifyPayment(
   razorpayPaymentId: string,
   razorpaySignature: string
 ): Promise<BookingResponse> {
-  const res = await api.post<BookingResponse>('/api/v1/appointments/verify-payment', {
+  const paymentVerificationApiResponse = await api.post<BookingResponse>('/api/v1/appointments/verify-payment', {
     razorpayOrderId,
     razorpayPaymentId,
     razorpaySignature,
   })
-  return res.data
+  return paymentVerificationApiResponse.data
 }
 
 /**

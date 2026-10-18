@@ -101,7 +101,42 @@ public class GlobalExceptionHandler {
         return pd;
     }
 
-    /** 400 — Razorpay payment signature verification failure */
+    /** 400 — Razorpay payment signature verification failure / tamper detection */
+    @ExceptionHandler(PaymentSignatureMismatchException.class)
+    public ProblemDetail handlePaymentSignatureMismatch(PaymentSignatureMismatchException ex) {
+        log.error("PAYMENT SECURITY ALERT: Razorpay HMAC signature mismatch. OrderID: {}, Detail: {}",
+            ex.getOrderId(), ex.getMessage());
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
+        pd.setType(URI.create("https://doppsy.com/errors/payment-tampered"));
+        pd.setTitle("Payment Signature Mismatch");
+        pd.setProperty("orderId", ex.getOrderId());
+        pd.setProperty("timestamp", Instant.now());
+        return pd;
+    }
+
+    /** 409 — slot conflict / already booked */
+    @ExceptionHandler(SlotAlreadyTakenException.class)
+    public ProblemDetail handleSlotAlreadyTaken(SlotAlreadyTakenException ex) {
+        log.warn("Slot collision detected: {}", ex.getMessage());
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        pd.setType(URI.create("https://doppsy.com/errors/slot-already-taken"));
+        pd.setTitle("Slot Already Taken");
+        pd.setProperty("timestamp", Instant.now());
+        return pd;
+    }
+
+    /** 502 — Razorpay gateway integration failure */
+    @ExceptionHandler(RazorpayOrderCreationException.class)
+    public ProblemDetail handleRazorpayOrderCreation(RazorpayOrderCreationException ex) {
+        log.error("Gateway communication failure with Razorpay: {}", ex.getMessage(), ex);
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_GATEWAY, ex.getMessage());
+        pd.setType(URI.create("https://doppsy.com/errors/payment-gateway-error"));
+        pd.setTitle("Payment Gateway Failure");
+        pd.setProperty("timestamp", Instant.now());
+        return pd;
+    }
+
+    /** 400 — Legacy Razorpay payment signature verification failure */
     @ExceptionHandler(PaymentSignatureException.class)
     public ProblemDetail handlePaymentSignature(PaymentSignatureException ex) {
         log.warn("Payment signature verification failed: {}", ex.getMessage());
