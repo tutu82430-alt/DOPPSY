@@ -1,0 +1,140 @@
+# ==============================================================================
+# Doppsy Healthcare Concierge — Continuous Deployment (CD) Pipeline
+# ==============================================================================
+# Triggers on every push to 'main' branch or manual dispatch via GitHub UI.
+# Connects securely via SSH to the Ubuntu VPS, pulls the latest code, and
+# triggers a zero-downtime rolling rebuild of the production Docker Compose stack.
+#
+# ------------------------------------------------------------------------------
+# REQUIRED GITHUB REPOSITORY SECRETS:
+# Navigate to: GitHub Repo -> Settings -> Secrets and variables -> Actions
+# Click 'New repository secret' and add the following:
+#
+# 1. HOST:
+#    The public IPv4 address or domain of your Ubuntu VPS (e.g. 192.0.2.1 or vps.doppsy.com)
+#
+# 2. USERNAME:
+#    The SSH user on the VPS (e.g. 'root' or a sudoer like 'ubuntu')
+#
+# 3. SSH_PRIVATE_KEY:
+#    The private OpenSSH key paired with your server's authorized_keys.
+#    Generate on your local machine / server via:
+#      ssh-keygen -t ed25519 -C "github-actions-doppsy"
+#    Copy the private key (~/.ssh/id_ed25519) into this GitHub Secret.
+#    Append the public key (~/.ssh/id_ed25519.pub) to /root/.ssh/authorized_keys on the VPS.
+#
+# 4. PORT (Optional):
+#    Custom SSH port if your server does not use the default port 22.
+#
+# 5. PASSPHRASE (Optional):
+#    Passphrase if your SSH private key was generated with encryption.
+# ------------------------------------------------------------------------------
+
+name: Deploy to Production VPS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Prevent concurrent deployments from colliding
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy Docker Compose Stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout Repository Metadata
+        uses: actions/checkout@v4
+
+      - name: Execute Remote Deployment via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.HOST || secrets.VPS_HOST }}
+          username: ${{ secrets.USERNAME || secrets.VPS_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY || secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.PORT || secrets.VPS_PORT || 22 }}
+          passphrase: ${{ secrets.PASSPHRASE || '' }}
+          script_stop: true
+          command_timeout: 15m
+          script: |
+            set -e
+
+            echo "=========================================================="
+            echo " [DOPPSY CD] Starting Automated Deployment on VPS        "
+            echo " Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')           "
+            echo "=========================================================="
+
+            # ------------------------------------------------------------------
+            # 1. Locate and navigate to project directory
+            # ------------------------------------------------------------------
+            PROJECT_DIR="/root/doppsy"
+            if [ ! -d "$PROJECT_DIR" ]; then
+              # Fallback check for current user home if not running as root
+              if [ -d "$HOME/doppsy" ]; then
+                PROJECT_DIR="$HOME/doppsy"
+              else
+                echo "[-] Target directory $PROJECT_DIR not found."
+                echo "[-] Performing initial repository clone into $PROJECT_DIR..."
+                git clone https://github.com/tutu82430-alt/DOPPSY.git "$PROJECT_DIR"
+              fi
+            fi
+
+            cd "$PROJECT_DIR"
+            echo "[+] Working directory: $(pwd)"
+
+            # ------------------------------------------------------------------
+            # 2. Synchronize repository with origin/main
+            # ------------------------------------------------------------------
+            echo "[+] Fetching latest commit from origin/main..."
+            git fetch --prune origin main
+            git reset --hard origin/main
+
+            CURRENT_COMMIT=$(git rev-parse --short HEAD)
+            COMMIT_MSG=$(git log -1 --pretty=%B | head -n 1)
+            echo "[+] Synced to commit: ${CURRENT_COMMIT} ('${COMMIT_MSG}')"
+
+            # ------------------------------------------------------------------
+            # 3. Detect Docker Compose Command (V2 plugin vs legacy binary)
+            # ------------------------------------------------------------------
+            if docker compose version >/dev/null 2>&1; then
+              COMPOSE_CMD="docker compose"
+            elif command -v docker-compose >/dev/null 2>&1; then
+              COMPOSE_CMD="docker-compose"
+            else
+              echo "[!] Error: Neither 'docker compose' nor 'docker-compose' found on VPS."
+              echo "[!] Please install Docker Compose: sudo apt-get update && sudo apt-get install -y docker-compose-plugin"
+              exit 1
+            fi
+            echo "[+] Using Compose CLI: $COMPOSE_CMD"
+
+            # ------------------------------------------------------------------
+            # 4. Rebuild & Deploy Containers
+            # ------------------------------------------------------------------
+            echo "[+] Rebuilding and launching production stack in background..."
+            # -f docker-compose.prod.yml : Targets production configuration
+            # up --build -d             : Builds updated code and restarts changed containers
+            # --remove-orphans          : Cleans up obsolete service containers
+            $COMPOSE_CMD -f docker-compose.prod.yml up --build -d --remove-orphans
+
+            # ------------------------------------------------------------------
+            # 5. Clean Dangling Docker Images (Disk Space Management)
+            # ------------------------------------------------------------------
+            echo "[+] Pruning untagged build cache images..."
+            docker image prune -f
+
+            # ------------------------------------------------------------------
+            # 6. Service Verification
+            # ------------------------------------------------------------------
+            echo "[+] Verifying running containers..."
+            $COMPOSE_CMD -f docker-compose.prod.yml ps
+
+            echo "=========================================================="
+            echo " [DOPPSY CD] Deployment completed successfully!          "
+            echo "=========================================================="

@@ -41,7 +41,26 @@ services:
     # Database port 5432 kept strictly internal — no host port exposure
 
   # ----------------------------------------------------------------------------
-  # 2. Backend: Spring Boot 3 Java Application
+  # 2. Message Broker: RabbitMQ (Smart Waitlist Engine)
+  # ----------------------------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: doppsy-rabbitmq-prod
+    restart: always
+    environment:
+      RABBITMQ_DEFAULT_USER: doppsy_user
+      RABBITMQ_DEFAULT_PASS: doppsy_secret
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - doppsy-internal
+    # Ports 5672 & 15672 kept internal; routed or exposed only if needed
+
+  # ----------------------------------------------------------------------------
+  # 3. Backend: Spring Boot 3 Java Application
   # ----------------------------------------------------------------------------
   backend:
     build:
@@ -52,11 +71,17 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/doppsy
       SPRING_DATASOURCE_USERNAME: doppsy_user
       SPRING_DATASOURCE_PASSWORD: doppsy_secret
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: doppsy_user
+      SPRING_RABBITMQ_PASSWORD: doppsy_secret
       DOPPSY_JWT_SECRET: "ZG9wcHN5LXN1cGVyLXNlY3JldC1rZXktMjAyNi1kb3Bwc3ktaGVhbHRoY2FyZQ=="
       DOPPSY_WHATSAPP_VERIFY_TOKEN: "doppsy_whatsapp_secret_token_2026"
     networks:
