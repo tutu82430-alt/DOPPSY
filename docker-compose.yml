@@ -1,9 +1,30 @@
 version: "3.9"
 
+# ==============================================================================
+# Doppsy Healthcare Concierge — Local Development Environment
+# ==============================================================================
+# Maps all local developer ports explicitly:
+#   - Next.js Web Frontend   : http://localhost:3000
+#   - Spring Boot Backend API: http://localhost:8080
+#   - PostgreSQL Database    : localhost:5432
+#   - RabbitMQ Broker        : localhost:5672 (Management UI: http://localhost:15672)
+# ==============================================================================
+
+networks:
+  doppsy-local:
+    driver: bridge
+
+volumes:
+  doppsy_pgdata:
+    driver: local
+
 services:
-  doppsy-db:
+  # ----------------------------------------------------------------------------
+  # 1. PostgreSQL 16 Database
+  # ----------------------------------------------------------------------------
+  db:
     image: postgres:16-alpine
-    container_name: doppsy-db
+    container_name: doppsy-local-db
     restart: unless-stopped
     environment:
       POSTGRES_USER: doppsy_user
@@ -16,10 +37,83 @@ services:
       - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U doppsy_user -d doppsy"]
-      interval: 10s
-      timeout: 5s
+      interval: 5s
+      timeout: 3s
       retries: 5
+    networks:
+      - doppsy-local
 
-volumes:
-  doppsy_pgdata:
-    driver: local
+  # ----------------------------------------------------------------------------
+  # 2. RabbitMQ Message Broker (Smart Waitlist Engine)
+  # ----------------------------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: doppsy-local-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - doppsy-local
+
+  # ----------------------------------------------------------------------------
+  # 3. Spring Boot Backend Application
+  # ----------------------------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: doppsy-local-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/doppsy
+      SPRING_DATASOURCE_USERNAME: doppsy_user
+      SPRING_DATASOURCE_PASSWORD: doppsy_secret
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: guest
+      SPRING_RABBITMQ_PASSWORD: guest
+      DOPPSY_JWT_SECRET: "ZG9wcHN5LXN1cGVyLXNlY3JldC1rZXktMjAyNi1kb3Bwc3ktaGVhbHRoY2FyZQ=="
+      DOPPSY_WHATSAPP_VERIFY_TOKEN: "doppsy_whatsapp_secret_token_2026"
+    networks:
+      - doppsy-local
+
+  # ----------------------------------------------------------------------------
+  # 4. Next.js Web Frontend
+  # ----------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./doppsy-web
+      dockerfile: Dockerfile
+    container_name: doppsy-local-frontend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      HOSTNAME: "0.0.0.0"
+      NEXT_PUBLIC_API_URL: http://backend:8080
+      NODE_ENV: production
+    networks:
+      - doppsy-local
