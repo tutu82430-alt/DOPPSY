@@ -56,4 +56,9 @@ doppsy:
     key-id: ${RAZORPAY_KEY_ID:rzp_test_REPLACE_ME}
     key-secret: ${RAZORPAY_KEY_SECRET:REPLACE_ME_WITH_RAZORPAY_SECRET}
     booking-deposit-paise: 20000   # ₹200 in paise
+  openai:
+    api-key: ${OPENAI_API_KEY:mock_openai_api_key}
+    api-url: "https://api.openai.com/v1"
+    whisper-model: "whisper-1"
+    chat-model: "gpt-4o-mini"
 

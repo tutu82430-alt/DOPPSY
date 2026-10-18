@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS providers (
     monthly_subscription_tier   VARCHAR(20)     NOT NULL DEFAULT 'FREE'
                                                 CHECK (monthly_subscription_tier IN ('FREE', 'BASIC', 'PREMIUM')),
     is_verified                 BOOLEAN         NOT NULL DEFAULT FALSE,
+    mobile_number               VARCHAR(15),
     created_at                  TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -66,6 +67,7 @@ COMMENT ON COLUMN providers.clinic_name                 IS 'Name of the clinic o
 COMMENT ON COLUMN providers.location                    IS 'Human-readable address or geo-coordinates string.';
 COMMENT ON COLUMN providers.monthly_subscription_tier   IS 'Monetisation tier: FREE, BASIC, or PREMIUM.';
 COMMENT ON COLUMN providers.is_verified                 IS 'TRUE once credentials are validated by the Doppsy team.';
+COMMENT ON COLUMN providers.mobile_number               IS 'Registered mobile number for voice prescription ingestion.';
 COMMENT ON COLUMN providers.created_at                  IS 'UTC timestamp of provider onboarding.';
 
 -- Indexes
@@ -73,6 +75,7 @@ CREATE INDEX IF NOT EXISTS idx_providers_specialty  ON providers (specialty);
 CREATE INDEX IF NOT EXISTS idx_providers_location   ON providers (location);
 CREATE INDEX IF NOT EXISTS idx_providers_tier       ON providers (monthly_subscription_tier);
 CREATE INDEX IF NOT EXISTS idx_providers_verified   ON providers (is_verified);
+CREATE INDEX IF NOT EXISTS idx_providers_mobile     ON providers (mobile_number);
 
 -- -----------------------------------------------------------------------------
 -- TABLE: appointments

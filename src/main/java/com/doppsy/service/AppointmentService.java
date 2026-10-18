@@ -1,5 +1,6 @@
 package com.doppsy.service;
 
+import com.doppsy.dto.StructuredPrescriptionDto;
 import com.doppsy.dto.BookingRequest;
 import com.doppsy.dto.BookingResponse;
 import com.doppsy.dto.VerifyPaymentRequest;
@@ -20,6 +21,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.File;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -36,6 +38,7 @@ public class AppointmentService {
     private final UserRepository userRepository;
     private final WhatsAppService whatsAppService;
     private final PaymentService paymentService;
+    private final PdfGeneratorService pdfGeneratorService;
 
     /**
      * Step 1: Reserves a consultation slot as PENDING_PAYMENT and creates a Razorpay order
@@ -228,6 +231,97 @@ public class AppointmentService {
         } catch (Exception notificationEx) {
             log.error("Failed to dispatch WhatsApp confirmation for AppointmentID: {}, Error: {}",
                 appointment.getAppointmentId(), notificationEx.getMessage());
+        }
+    }
+
+    /**
+     * AI Voice Prescription Delivery Flow:
+     * 1. Identifies the doctor's most recently COMPLETED appointment.
+     * 2. Generates the branded PDF prescription via PdfGeneratorService.
+     * 3. Uploads the PDF to Meta WhatsApp Cloud API to obtain a media_id.
+     * 4. Immediately routes the PDF document message to the patient on WhatsApp.
+     * 5. Confirms delivery back to the prescribing doctor.
+     */
+    @Transactional
+    public void processAndDeliverVoicePrescription(Provider doctorProvider, StructuredPrescriptionDto prescriptionPayload) {
+        // Guard clauses
+        if (doctorProvider == null) {
+            throw new IllegalArgumentException("Doctor provider must not be null for prescription delivery");
+        }
+        if (prescriptionPayload == null) {
+            throw new IllegalArgumentException("Structured prescription payload must not be null");
+        }
+
+        UUID providerId = doctorProvider.getProviderId();
+        log.info("[VOICE-EMR-DELIVERY] Locating most recent completed appointment for Doctor: '{}' (ProviderID: {})",
+            doctorProvider.getFullName(), providerId);
+
+        // Primary lookup: most recently COMPLETED appointment
+        Optional<Appointment> targetAppointmentOpt = appointmentRepository.findMostRecentCompletedByProviderId(providerId);
+
+        // Fallback: in-flight target if appointment was completed in-person right before voice note dictation
+        if (targetAppointmentOpt.isEmpty()) {
+            log.warn("[VOICE-EMR-DELIVERY] No COMPLETED appointment found for ProviderID: {}. Checking active target appointments...", providerId);
+            targetAppointmentOpt = appointmentRepository.findMostRecentPrescriptionTargetAppointment(providerId);
+        }
+
+        if (targetAppointmentOpt.isEmpty()) {
+            log.error("[VOICE-EMR-DELIVERY] Delivery aborted: No active or completed appointment found for Doctor: {}", doctorProvider.getFullName());
+            if (doctorProvider.getMobileNumber() != null) {
+                whatsAppService.sendMessage(doctorProvider.getMobileNumber(),
+                    "⚠️ Doppsy Concierge: We transcribed your voice prescription, but could not find a recently completed appointment to attach it to. Please ensure the patient's appointment is completed.");
+            }
+            return;
+        }
+
+        Appointment targetAppointment = targetAppointmentOpt.get();
+        User patientUser = targetAppointment.getUser();
+
+        if (patientUser == null || patientUser.getMobileNumber() == null) {
+            log.error("[VOICE-EMR-DELIVERY] Patient mobile number missing for AppointmentID: {}", targetAppointment.getAppointmentId());
+            return;
+        }
+
+        // 1. Generate professional PDF prescription
+        byte[] pdfBytes = pdfGeneratorService.renderPrescriptionPdf(prescriptionPayload, targetAppointment);
+        pdfGeneratorService.generatePrescriptionPdfFile(prescriptionPayload, targetAppointment); // persist temporary file on server
+
+        // 2. Upload generated PDF back to Meta API to get a new media_id
+        String documentFilename = String.format("Prescription_Dr_%s_%s.pdf",
+            doctorProvider.getFullName().replace(" ", "_"),
+            targetAppointment.getAppointmentId().toString().substring(0, 8));
+
+        String uploadedMediaId = whatsAppService.uploadDocumentMedia(pdfBytes, documentFilename, "application/pdf");
+
+        // 3. Immediately send as WhatsApp Document message to that patient
+        String patientCaption = String.format(
+            "📋 Official Digital Prescription from Dr. %s (%s) for your consultation on %s.",
+            doctorProvider.getFullName(),
+            doctorProvider.getClinicName() != null ? doctorProvider.getClinicName() : "Doppsy Healthcare",
+            targetAppointment.getAppointmentTimestamp() != null ? targetAppointment.getAppointmentTimestamp().toLocalDate() : "today"
+        );
+
+        boolean isDelivered = whatsAppService.sendDocumentMessage(
+            patientUser.getMobileNumber(),
+            uploadedMediaId,
+            patientCaption,
+            documentFilename
+        );
+
+        if (isDelivered) {
+            log.info("Successfully generated and routed AI prescription for AppointmentID: {}", targetAppointment.getAppointmentId());
+
+            // 4. Notify doctor of successful delivery
+            if (doctorProvider.getMobileNumber() != null) {
+                whatsAppService.sendMessage(doctorProvider.getMobileNumber(), String.format(
+                    "✅ AI Prescription Generated & Delivered!\n\nPatient: %s\nDiagnosis: %s\nRx sent to: %s via WhatsApp.",
+                    patientUser.getFullName(),
+                    prescriptionPayload.getDiagnosis(),
+                    patientUser.getMobileNumber()
+                ));
+            }
+        } else {
+            log.error("[VOICE-EMR-DELIVERY] Failed to deliver document message for AppointmentID: {}", targetAppointment.getAppointmentId());
         }
     }
 

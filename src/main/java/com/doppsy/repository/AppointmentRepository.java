@@ -252,4 +252,44 @@ public interface AppointmentRepository extends JpaRepository<Appointment, UUID> 
      * @return the matching appointment if found
      */
     Optional<Appointment> findByRazorpayOrderId(String razorpayOrderId);
+
+    // ----------------------------------------------------------------
+    // AI Voice Prescription Queries
+    // ----------------------------------------------------------------
+
+    /**
+     * Finds the doctor's most recently COMPLETED appointment to attach
+     * and route the generated AI prescription.
+     *
+     * @param providerId the doctor's UUID
+     * @return the most recent completed appointment
+     */
+    @Query("""
+        SELECT a FROM Appointment a
+        JOIN FETCH a.provider p
+        JOIN FETCH a.user u
+        WHERE a.provider.providerId = :providerId
+          AND a.status = 'COMPLETED'
+        ORDER BY a.appointmentTimestamp DESC
+        LIMIT 1
+        """)
+    Optional<Appointment> findMostRecentCompletedByProviderId(@Param("providerId") UUID providerId);
+
+    /**
+     * Target resolution for in-flight prescriptions: finds the most recent COMPLETED or BOOKED
+     * appointment for the doctor.
+     *
+     * @param providerId the doctor's UUID
+     * @return matching appointment with eager associations
+     */
+    @Query("""
+        SELECT a FROM Appointment a
+        JOIN FETCH a.provider p
+        JOIN FETCH a.user u
+        WHERE a.provider.providerId = :providerId
+          AND a.status IN ('COMPLETED', 'BOOKED')
+        ORDER BY CASE WHEN a.status = 'COMPLETED' THEN 1 ELSE 2 END, a.appointmentTimestamp DESC
+        LIMIT 1
+        """)
+    Optional<Appointment> findMostRecentPrescriptionTargetAppointment(@Param("providerId") UUID providerId);
 }

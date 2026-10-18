@@ -60,6 +60,10 @@ public class Provider {
     @Column(name = "is_verified", nullable = false)
     private Boolean isVerified = false;
 
+    /** Registered mobile number used by the doctor to send WhatsApp voice prescriptions. */
+    @Column(name = "mobile_number", length = 15)
+    private String mobileNumber;
+
     /** UTC timestamp of provider onboarding; set automatically on insert. */
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

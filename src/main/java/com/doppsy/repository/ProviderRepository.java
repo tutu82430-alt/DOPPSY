@@ -71,4 +71,20 @@ public interface ProviderRepository extends JpaRepository<Provider, UUID> {
      * @return {@code true} if a provider with this exact name exists
      */
     boolean existsByFullName(String fullName);
+
+    /**
+     * Resolves a provider by their registered WhatsApp mobile number.
+     * Matches exact mobile or suffix (to handle international country codes like +91).
+     *
+     * @param mobile the doctor's mobile number
+     * @return matching provider if registered
+     */
+    @org.springframework.data.jpa.repository.Query("""
+        SELECT p FROM Provider p
+        WHERE p.mobileNumber IS NOT NULL
+          AND (p.mobileNumber = :mobile
+               OR :mobile LIKE CONCAT('%', p.mobileNumber)
+               OR p.mobileNumber LIKE CONCAT('%', :mobile))
+        """)
+    java.util.Optional<Provider> findByMatchingMobile(@org.springframework.data.repository.query.Param("mobile") String mobile);
 }

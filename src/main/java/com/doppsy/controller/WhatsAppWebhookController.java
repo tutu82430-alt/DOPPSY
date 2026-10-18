@@ -82,9 +82,9 @@ public class WhatsAppWebhookController {
      * @return HTTP 200 OK acknowledgment ("EVENT_RECEIVED")
      */
     @PostMapping(value = "/webhook", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<String> handleIncomingMessage(@RequestBody String rawPayload) {
-        log.info("[WHATSAPP WEBHOOK] Received message payload from Meta");
-        webhookService.processWebhookPayload(rawPayload);
+    public ResponseEntity<String> handleIncomingMessage(@RequestBody String inboundWebhookPayload) {
+        log.info("[WHATSAPP WEBHOOK] Received inbound message payload from Meta");
+        webhookService.processWebhookPayload(inboundWebhookPayload);
         return ResponseEntity.ok("EVENT_RECEIVED");
     }
 
