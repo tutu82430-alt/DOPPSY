@@ -101,6 +101,17 @@ public class GlobalExceptionHandler {
         return pd;
     }
 
+    /** 400 — Razorpay payment signature verification failure */
+    @ExceptionHandler(PaymentSignatureException.class)
+    public ProblemDetail handlePaymentSignature(PaymentSignatureException ex) {
+        log.warn("Payment signature verification failed: {}", ex.getMessage());
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
+        pd.setType(URI.create("https://doppsy.com/errors/payment-signature-invalid"));
+        pd.setTitle("Payment Verification Failed");
+        pd.setProperty("timestamp", Instant.now());
+        return pd;
+    }
+
     /** 500 — catch-all */
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleGeneral(Exception ex) {

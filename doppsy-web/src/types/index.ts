@@ -39,6 +39,7 @@ export interface DoctorResponse {
 
 export type AppointmentStatus =
   | 'AVAILABLE'
+  | 'PENDING_PAYMENT'
   | 'BOOKED'
   | 'COMPLETED'
   | 'CANCELLED'
@@ -54,11 +55,22 @@ export interface BookingResponse {
   status: AppointmentStatus
   bookingFee: number
   createdAt: string
+  /** Razorpay order ID — present when status is PENDING_PAYMENT */
+  razorpayOrderId?: string
+  /** Razorpay publishable key ID — present when status is PENDING_PAYMENT */
+  razorpayKeyId?: string
 }
 
 export interface BookingRequest {
   providerId: string
   appointmentTimestamp: string
+}
+
+/** Request body for verifying a Razorpay payment */
+export interface VerifyPaymentRequest {
+  razorpayOrderId: string
+  razorpayPaymentId: string
+  razorpaySignature: string
 }
 
 // ─── Doctor Roster & Clinic Management ────────────────────────────────────────

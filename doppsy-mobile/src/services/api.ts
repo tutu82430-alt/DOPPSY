@@ -97,6 +97,23 @@ export async function bookAppointment(
 }
 
 /**
+ * Verifies Razorpay payment signature with Spring Boot backend.
+ * POST /api/v1/appointments/verify-payment
+ */
+export async function verifyPayment(
+  razorpayOrderId: string,
+  razorpayPaymentId: string,
+  razorpaySignature: string
+): Promise<BookingResponse> {
+  const res = await api.post<BookingResponse>('/api/v1/appointments/verify-payment', {
+    razorpayOrderId,
+    razorpayPaymentId,
+    razorpaySignature,
+  })
+  return res.data
+}
+
+/**
  * Fetches the authenticated doctor's full patient schedule for a specific date (defaults to today).
  * GET /api/v1/doctor/roster
  */

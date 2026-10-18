@@ -52,4 +52,8 @@ doppsy:
     access-token: ${DOPPSY_WHATSAPP_ACCESS_TOKEN:mock_whatsapp_access_token}
     phone-number-id: ${DOPPSY_WHATSAPP_PHONE_NUMBER_ID:105948372615201}
     api-url: "https://graph.facebook.com/v20.0"
+  razorpay:
+    key-id: ${RAZORPAY_KEY_ID:rzp_test_REPLACE_ME}
+    key-secret: ${RAZORPAY_KEY_SECRET:REPLACE_ME_WITH_RAZORPAY_SECRET}
+    booking-deposit-paise: 20000   # ₹200 in paise
 

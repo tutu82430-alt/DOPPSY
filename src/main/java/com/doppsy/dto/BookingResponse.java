@@ -13,8 +13,12 @@ import java.util.UUID;
 /**
  * Response payload returned after a successful booking or appointment lookup.
  *
- * <p>Combines appointment, provider, and financial data into a single
- * client-friendly object — no follow-up calls needed.</p>
+ * <p>Combines appointment, provider, financial, and Razorpay payment data
+ * into a single client-friendly object — no follow-up calls needed.</p>
+ *
+ * <p>When the status is {@code PENDING_PAYMENT}, the {@code razorpayOrderId}
+ * and {@code razorpayKeyId} fields are populated so the client can open the
+ * Razorpay checkout UI.</p>
  */
 @Data
 @Builder
@@ -37,7 +41,7 @@ public class BookingResponse {
     /** Scheduled UTC date-time of the appointment. */
     private LocalDateTime appointmentTimestamp;
 
-    /** Current lifecycle status (e.g., BOOKED, CANCELLED). */
+    /** Current lifecycle status (e.g., PENDING_PAYMENT, BOOKED, CANCELLED). */
     private AppointmentStatus status;
 
     /**
@@ -48,4 +52,18 @@ public class BookingResponse {
 
     /** UTC timestamp when this booking record was created. */
     private LocalDateTime createdAt;
+
+    // ── Razorpay payment fields (populated during PENDING_PAYMENT) ────────
+
+    /**
+     * Razorpay order ID — present when status is {@code PENDING_PAYMENT}.
+     * The client uses this to open the Razorpay checkout modal.
+     */
+    private String razorpayOrderId;
+
+    /**
+     * Razorpay publishable key ID — present when status is {@code PENDING_PAYMENT}.
+     * Required by the Razorpay checkout script on the client side.
+     */
+    private String razorpayKeyId;
 }

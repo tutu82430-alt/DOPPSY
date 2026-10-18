@@ -142,6 +142,23 @@ export async function cancelAppointment(appointmentId: string): Promise<BookingR
   return handleResponse<BookingResponse>(res)
 }
 
+/**
+ * Verifies a Razorpay payment and promotes the appointment to BOOKED.
+ * Called after the Razorpay checkout modal completes successfully.
+ */
+export async function verifyPayment(
+  razorpayOrderId: string,
+  razorpayPaymentId: string,
+  razorpaySignature: string
+): Promise<BookingResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/appointments/verify-payment`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ razorpayOrderId, razorpayPaymentId, razorpaySignature }),
+  })
+  return handleResponse<BookingResponse>(res)
+}
+
 // ─── Doctor Roster & Clinic Management ────────────────────────────────────────
 
 /**

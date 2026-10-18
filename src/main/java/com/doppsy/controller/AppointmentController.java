@@ -2,6 +2,7 @@ package com.doppsy.controller;
 
 import com.doppsy.dto.BookingRequest;
 import com.doppsy.dto.BookingResponse;
+import com.doppsy.dto.VerifyPaymentRequest;
 import com.doppsy.service.AppointmentService;
 import com.doppsy.util.JwtTokenExtractor;
 import jakarta.servlet.http.HttpServletRequest;
@@ -25,9 +26,10 @@ import java.util.UUID;
  *
  * <h3>Endpoints</h3>
  * <pre>
- *   POST  /api/v1/appointments/book         — Book a slot
- *   GET   /api/v1/appointments/me           — List my appointments
- *   PATCH /api/v1/appointments/{id}/cancel  — Cancel a booking
+ *   POST  /api/v1/appointments/book              — Book a slot (→ PENDING_PAYMENT + Razorpay order)
+ *   POST  /api/v1/appointments/verify-payment     — Verify Razorpay payment (→ BOOKED)
+ *   GET   /api/v1/appointments/me                — List my appointments
+ *   PATCH /api/v1/appointments/{id}/cancel       — Cancel a booking
  * </pre>
  */
 @Slf4j
@@ -45,6 +47,11 @@ public class AppointmentController {
 
     /**
      * Books a time slot for the authenticated patient.
+     *
+     * <p>The slot is saved as {@code PENDING_PAYMENT} and a Razorpay order ID
+     * is created. The client must open the Razorpay checkout with the returned
+     * order ID, and upon successful payment, call
+     * {@code POST /api/v1/appointments/verify-payment}.</p>
      *
      * <p>The user ID is extracted from the JWT bearer token — never from the request body.</p>
      *
@@ -65,15 +72,17 @@ public class AppointmentController {
      *     "providerName":         "Dr. Rohan Mehta",
      *     "clinicName":           "Mehta Multispeciality Clinic",
      *     "appointmentTimestamp": "2026-11-01T10:30:00",
-     *     "status":               "BOOKED",
+     *     "status":               "PENDING_PAYMENT",
      *     "bookingFee":           50.00,
+     *     "razorpayOrderId":      "order_Abc123XyZ",
+     *     "razorpayKeyId":        "rzp_test_...",
      *     "createdAt":            "2026-10-11T21:30:00"
      *   }
      * </pre>
      *
      * @param request     booking details (providerId + appointmentTimestamp)
      * @param httpRequest raw HTTP request for JWT extraction
-     * @return 201 Created with {@link BookingResponse}
+     * @return 201 Created with {@link BookingResponse} including Razorpay order details
      */
     @PostMapping("/book")
     public ResponseEntity<BookingResponse> bookAppointment(
@@ -86,6 +95,48 @@ public class AppointmentController {
 
         BookingResponse response = appointmentService.bookAppointment(userId, request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    // -----------------------------------------------------------------------
+    // POST /api/v1/appointments/verify-payment
+    // -----------------------------------------------------------------------
+
+    /**
+     * Verifies the Razorpay payment callback and promotes the appointment to BOOKED.
+     *
+     * <p>The client must send the three Razorpay callback fields after the checkout
+     * completes successfully. The backend verifies the HMAC SHA256 signature to
+     * ensure the payment is authentic.</p>
+     *
+     * <pre>
+     * Request:
+     *   POST /api/v1/appointments/verify-payment
+     *   Authorization: Bearer &lt;token&gt;
+     *   Content-Type: application/json
+     *   {
+     *     "razorpayOrderId":   "order_Abc123XyZ",
+     *     "razorpayPaymentId": "pay_Abc123XyZ",
+     *     "razorpaySignature": "hmac_sha256_signature_string"
+     *   }
+     *
+     * Response 200 OK:
+     *   { ...BookingResponse with status: "BOOKED"... }
+     * </pre>
+     *
+     * @param request     Razorpay payment verification details
+     * @param httpRequest raw HTTP request for JWT extraction
+     * @return 200 OK with {@link BookingResponse} in BOOKED state
+     */
+    @PostMapping("/verify-payment")
+    public ResponseEntity<BookingResponse> verifyPayment(
+        @Valid @RequestBody VerifyPaymentRequest request,
+        HttpServletRequest httpRequest
+    ) {
+        UUID userId = tokenExtractor.extractUserIdOrThrow(httpRequest);
+        log.info("[APPT] Verify payment — userId={}, orderId={}", userId, request.getRazorpayOrderId());
+
+        BookingResponse response = appointmentService.verifyPaymentAndConfirm(request);
+        return ResponseEntity.ok(response);
     }
 
     // -----------------------------------------------------------------------
@@ -122,7 +173,7 @@ public class AppointmentController {
     // -----------------------------------------------------------------------
 
     /**
-     * Cancels a {@code BOOKED} appointment owned by the authenticated user.
+     * Cancels a {@code BOOKED} or {@code PENDING_PAYMENT} appointment owned by the authenticated user.
      *
      * <p>Returns 409 Conflict if:</p>
      * <ul>

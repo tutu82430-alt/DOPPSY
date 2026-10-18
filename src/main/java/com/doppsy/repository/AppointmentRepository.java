@@ -239,4 +239,17 @@ public interface AppointmentRepository extends JpaRepository<Appointment, UUID> 
         @Param("windowStart") LocalDateTime windowStart,
         @Param("windowEnd") LocalDateTime windowEnd
     );
+
+    // ----------------------------------------------------------------
+    // Razorpay Payment Verification
+    // ----------------------------------------------------------------
+
+    /**
+     * Finds an appointment by its Razorpay order ID.
+     * Used during the payment verification callback flow.
+     *
+     * @param razorpayOrderId the Razorpay order ID
+     * @return the matching appointment if found
+     */
+    Optional<Appointment> findByRazorpayOrderId(String razorpayOrderId);
 }

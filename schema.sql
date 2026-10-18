@@ -89,9 +89,12 @@ CREATE TABLE IF NOT EXISTS appointments (
     appointment_timestamp   TIMESTAMP       NOT NULL,
     status                  VARCHAR(20)     NOT NULL DEFAULT 'AVAILABLE'
                                             CHECK (status IN (
-                                                'AVAILABLE', 'BOOKED', 'COMPLETED', 'CANCELLED', 'NO_SHOW', 'BLOCKED'
+                                                'AVAILABLE', 'PENDING_PAYMENT', 'BOOKED',
+                                                'COMPLETED', 'CANCELLED', 'NO_SHOW', 'BLOCKED'
                                             )),
     booking_fee             DECIMAL(10, 2)  CHECK (booking_fee >= 0),
+    razorpay_order_id       VARCHAR(50),
+    razorpay_payment_id     VARCHAR(50),
     created_at              TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

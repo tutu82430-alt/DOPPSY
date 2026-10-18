@@ -90,6 +90,14 @@ public class Appointment {
     @Column(name = "booking_fee", precision = 10, scale = 2)
     private BigDecimal bookingFee;
 
+    /** Razorpay order ID generated during the booking deposit flow. */
+    @Column(name = "razorpay_order_id", length = 50)
+    private String razorpayOrderId;
+
+    /** Razorpay payment ID captured after successful payment verification. */
+    @Column(name = "razorpay_payment_id", length = 50)
+    private String razorpayPaymentId;
+
     /** UTC timestamp when this slot was first created; set automatically on insert. */
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -111,7 +119,9 @@ public class Appointment {
     public enum AppointmentStatus {
         /** Slot is open and can be claimed by any patient. */
         AVAILABLE,
-        /** Slot has been reserved by a patient. */
+        /** Slot has been reserved, pending ₹200 booking deposit via Razorpay. */
+        PENDING_PAYMENT,
+        /** Slot has been reserved and payment verified. */
         BOOKED,
         /** Appointment was attended and concluded. */
         COMPLETED,

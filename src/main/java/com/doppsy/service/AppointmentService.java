@@ -2,18 +2,22 @@ package com.doppsy.service;
 
 import com.doppsy.dto.BookingRequest;
 import com.doppsy.dto.BookingResponse;
+import com.doppsy.dto.VerifyPaymentRequest;
 import com.doppsy.entity.Appointment;
 import com.doppsy.entity.Appointment.AppointmentStatus;
 import com.doppsy.entity.Provider;
 import com.doppsy.entity.Provider.SubscriptionTier;
 import com.doppsy.entity.User;
+import com.doppsy.exception.PaymentSignatureException;
 import com.doppsy.exception.ResourceNotFoundException;
 import com.doppsy.exception.SlotUnavailableException;
 import com.doppsy.repository.AppointmentRepository;
 import com.doppsy.repository.ProviderRepository;
 import com.doppsy.repository.UserRepository;
+import com.razorpay.RazorpayException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,13 +29,23 @@ import java.util.UUID;
 /**
  * Booking engine service — the heart of Doppsy's zero-wait-time appointment system.
  *
+ * <h3>Razorpay Deposit Flow</h3>
+ * <ol>
+ *   <li>{@link #bookAppointment} claims the slot as {@code PENDING_PAYMENT},
+ *       creates a Razorpay order, and returns the order ID to the client.</li>
+ *   <li>The client opens the Razorpay checkout with the order ID.</li>
+ *   <li>{@link #verifyPaymentAndConfirm} validates the HMAC SHA256 signature,
+ *       promotes the appointment to {@code BOOKED}, and dispatches a WhatsApp
+ *       confirmation asynchronously.</li>
+ * </ol>
+ *
  * <h3>Concurrency Guarantee</h3>
  * <p>{@link #bookAppointment} runs inside a single {@code @Transactional} boundary.
  * The call to {@code findSlotForBooking} acquires a
  * <strong>PESSIMISTIC_WRITE (SELECT … FOR UPDATE)</strong> row-level lock on the
  * target slot. Only one transaction at a time can hold this lock, so two patients
  * attempting to book the same slot simultaneously will serialize: the second will
- * see the updated {@code BOOKED} status and receive a 409 Conflict response.</p>
+ * see the updated {@code PENDING_PAYMENT} status and receive a 409 Conflict response.</p>
  *
  * <h3>Booking Fee Logic</h3>
  * <table border="1">
@@ -49,9 +63,11 @@ public class AppointmentService {
     private final AppointmentRepository appointmentRepository;
     private final UserRepository userRepository;
     private final ProviderRepository providerRepository;
+    private final PaymentService paymentService;
+    private final WhatsAppService whatsAppService;
 
     // -----------------------------------------------------------------------
-    // Book an appointment
+    // Book an appointment (Step 1 — creates PENDING_PAYMENT + Razorpay order)
     // -----------------------------------------------------------------------
 
     /**
@@ -62,14 +78,14 @@ public class AppointmentService {
      *   <li>Verify the user (patient) exists.</li>
      *   <li>Verify the provider exists.</li>
      *   <li>Acquire a pessimistic write lock on the requested slot row.</li>
-     *   <li>If the slot is already {@code BOOKED/COMPLETED/CANCELLED} → throw {@link SlotUnavailableException}.</li>
-     *   <li>If the slot is {@code AVAILABLE} → claim it (set user + BOOKED + fee).</li>
-     *   <li>If no slot row exists yet → create one directly as {@code BOOKED}.</li>
+     *   <li>If the slot is already {@code BOOKED/COMPLETED/CANCELLED/PENDING_PAYMENT} → throw {@link SlotUnavailableException}.</li>
+     *   <li>If the slot is {@code AVAILABLE} → claim it (set user + PENDING_PAYMENT + fee + Razorpay order).</li>
+     *   <li>If no slot row exists yet → create one directly as {@code PENDING_PAYMENT}.</li>
      * </ol>
      *
      * @param userId  UUID of the authenticated patient (from JWT)
      * @param request contains providerId and desired appointment timestamp
-     * @return {@link BookingResponse} with full appointment details
+     * @return {@link BookingResponse} with full appointment details + Razorpay orderId
      */
     @Transactional
     public BookingResponse bookAppointment(UUID userId, BookingRequest request) {
@@ -105,28 +121,136 @@ public class AppointmentService {
                 );
             }
 
-            // Step 5 — Claim the existing AVAILABLE slot ─────────────────────
+            // Step 5 — Claim the existing AVAILABLE slot as PENDING_PAYMENT ──
             slot.setUser(user);
-            slot.setStatus(AppointmentStatus.BOOKED);
+            slot.setStatus(AppointmentStatus.PENDING_PAYMENT);
             slot.setBookingFee(calculateFee(provider));
             appointment = appointmentRepository.save(slot);
-            log.info("[BOOKING] Claimed existing slot — appointmentId={}, userId={}, providerId={}",
+            log.info("[BOOKING] Claimed existing slot as PENDING_PAYMENT — appointmentId={}, userId={}, providerId={}",
                 appointment.getAppointmentId(), userId, provider.getProviderId());
 
         } else {
-            // Step 6 — No pre-existing slot; create on-demand as BOOKED ──────
+            // Step 6 — No pre-existing slot; create on-demand as PENDING_PAYMENT
             appointment = new Appointment();
             appointment.setUser(user);
             appointment.setProvider(provider);
             appointment.setAppointmentTimestamp(request.getAppointmentTimestamp());
-            appointment.setStatus(AppointmentStatus.BOOKED);
+            appointment.setStatus(AppointmentStatus.PENDING_PAYMENT);
             appointment.setBookingFee(calculateFee(provider));
             appointment = appointmentRepository.save(appointment);
-            log.info("[BOOKING] Created new slot on-demand — appointmentId={}, userId={}, providerId={}",
+            log.info("[BOOKING] Created new slot on-demand as PENDING_PAYMENT — appointmentId={}, userId={}, providerId={}",
                 appointment.getAppointmentId(), userId, provider.getProviderId());
         }
 
-        return toBookingResponse(appointment, provider);
+        // Step 7 — Create Razorpay order for the ₹200 deposit ────────────────
+        try {
+            String razorpayOrderId = paymentService.createOrder(
+                appointment.getAppointmentId().toString(),
+                user.getFullName()
+            );
+            appointment.setRazorpayOrderId(razorpayOrderId);
+            appointment = appointmentRepository.save(appointment);
+
+            BookingResponse response = toBookingResponse(appointment, provider);
+            response.setRazorpayOrderId(razorpayOrderId);
+            response.setRazorpayKeyId(paymentService.getRazorpayKeyId());
+            return response;
+
+        } catch (RazorpayException e) {
+            // Rollback: revert slot to AVAILABLE since payment order creation failed
+            appointment.setStatus(AppointmentStatus.AVAILABLE);
+            appointment.setUser(null);
+            appointment.setBookingFee(null);
+            appointmentRepository.save(appointment);
+            log.error("[BOOKING] Razorpay order creation failed — reverting slot to AVAILABLE", e);
+            throw new RuntimeException("Payment gateway error: " + e.getMessage(), e);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Verify payment & confirm booking (Step 2)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Verifies the Razorpay payment signature and promotes the appointment to BOOKED.
+     *
+     * <p><strong>Flow:</strong></p>
+     * <ol>
+     *   <li>Look up the appointment by Razorpay order ID.</li>
+     *   <li>Validate the HMAC SHA256 signature via {@link PaymentService}.</li>
+     *   <li>If valid, update status to {@code BOOKED} and store the payment ID.</li>
+     *   <li>Dispatch WhatsApp booking confirmation asynchronously.</li>
+     * </ol>
+     *
+     * @param request contains razorpayOrderId, razorpayPaymentId, and razorpaySignature
+     * @return {@link BookingResponse} with status BOOKED
+     */
+    @Transactional
+    public BookingResponse verifyPaymentAndConfirm(VerifyPaymentRequest request) {
+
+        // Step 1 — Find the appointment by Razorpay order ID
+        Appointment appointment = appointmentRepository
+            .findByRazorpayOrderId(request.getRazorpayOrderId())
+            .orElseThrow(() -> new ResourceNotFoundException(
+                "Appointment", "razorpayOrderId", request.getRazorpayOrderId()));
+
+        // Guard: only PENDING_PAYMENT can be verified
+        if (appointment.getStatus() != AppointmentStatus.PENDING_PAYMENT) {
+            throw new SlotUnavailableException(
+                String.format("Appointment %s is in status '%s', expected PENDING_PAYMENT.",
+                    appointment.getAppointmentId(), appointment.getStatus()));
+        }
+
+        // Step 2 — Verify the HMAC SHA256 signature
+        boolean isValid = paymentService.verifyPaymentSignature(
+            request.getRazorpayOrderId(),
+            request.getRazorpayPaymentId(),
+            request.getRazorpaySignature()
+        );
+
+        if (!isValid) {
+            throw new PaymentSignatureException(
+                "Razorpay payment signature verification failed for orderId: " + request.getRazorpayOrderId());
+        }
+
+        // Step 3 — Promote to BOOKED
+        appointment.setStatus(AppointmentStatus.BOOKED);
+        appointment.setRazorpayPaymentId(request.getRazorpayPaymentId());
+        appointment = appointmentRepository.save(appointment);
+
+        log.info("[BOOKING] Payment verified & appointment BOOKED — appointmentId={}, paymentId={}",
+            appointment.getAppointmentId(), request.getRazorpayPaymentId());
+
+        // Step 4 — Dispatch WhatsApp confirmation asynchronously
+        sendBookingConfirmation(appointment);
+
+        return toBookingResponse(appointment, appointment.getProvider());
+    }
+
+    /**
+     * Sends a WhatsApp booking confirmation in a background thread.
+     */
+    @Async
+    protected void sendBookingConfirmation(Appointment appointment) {
+        try {
+            User user = appointment.getUser();
+            Provider provider = appointment.getProvider();
+            if (user != null && user.getMobileNumber() != null) {
+                String message = String.format(
+                    "✅ Doppsy Booking Confirmed!\n\n" +
+                    "Doctor: %s\nClinic: %s\nTime: %s\n\n" +
+                    "₹200 deposit received.\nReply \"CANCEL\" to cancel.",
+                    provider.getFullName(),
+                    provider.getClinicName(),
+                    appointment.getAppointmentTimestamp()
+                );
+                whatsAppService.sendMessage(user.getMobileNumber(), message);
+                log.info("[WHATSAPP] Booking confirmation dispatched — userId={}, appointmentId={}",
+                    user.getUserId(), appointment.getAppointmentId());
+            }
+        } catch (Exception e) {
+            log.error("[WHATSAPP] Failed to send booking confirmation", e);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -182,10 +306,11 @@ public class AppointmentService {
                 "You are not authorised to cancel appointment: " + appointmentId);
         }
 
-        // State machine guard — can only cancel BOOKED appointments
-        if (appointment.getStatus() != AppointmentStatus.BOOKED) {
+        // State machine guard — can only cancel BOOKED or PENDING_PAYMENT appointments
+        if (appointment.getStatus() != AppointmentStatus.BOOKED &&
+            appointment.getStatus() != AppointmentStatus.PENDING_PAYMENT) {
             throw new SlotUnavailableException(
-                String.format("Cannot cancel an appointment with status '%s'. Only BOOKED appointments can be cancelled.",
+                String.format("Cannot cancel an appointment with status '%s'. Only BOOKED or PENDING_PAYMENT appointments can be cancelled.",
                     appointment.getStatus())
             );
         }

@@ -8,6 +8,7 @@ import {
   getMyAppointments,
   bookAppointment,
   cancelAppointment,
+  verifyPayment,
   getStoredUser,
   logout,
 } from '@/services/api'
@@ -28,6 +29,7 @@ import {
   CheckCircle2,
   Star,
   Zap,
+  ShieldCheck,
 } from 'lucide-react'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -92,18 +94,107 @@ function Toast({ msg, type, onClose }: { msg: string; type: 'success' | 'error';
   )
 }
 
-// ─── Book Modal ───────────────────────────────────────────────────────────────
+// ─── Razorpay Script Loader ──────────────────────────────────────────────────
+function loadRazorpayScript(): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (typeof window !== 'undefined' && (window as unknown as { Razorpay?: unknown }).Razorpay) {
+      resolve(true)
+      return
+    }
+    const script = document.createElement('script')
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js'
+    script.async = true
+    script.onload = () => resolve(true)
+    script.onerror = () => resolve(false)
+    document.body.appendChild(script)
+  })
+}
+
+// ─── Booking Confirmation Screen ──────────────────────────────────────────────
+function BookingConfirmationModal({
+  booking,
+  onClose,
+}: {
+  booking: BookingResponse
+  onClose: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-fade-in">
+      <div className="glass-card w-full max-w-lg p-6 sm:p-8 animate-slide-up space-y-6" style={{ boxShadow: '0 30px 70px rgba(0,0,0,0.6)' }}>
+        <div className="text-center space-y-2">
+          <div className="w-16 h-16 mx-auto rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
+            <CheckCircle2 className="w-9 h-9" />
+          </div>
+          <h3 className="text-2xl font-bold text-white">Booking Confirmed!</h3>
+          <p className="text-sm text-slate-300">
+            Your zero-wait priority appointment is secured.
+          </p>
+        </div>
+
+        <div className="glass-card p-4 space-y-3 bg-white/[0.02]">
+          <div className="flex justify-between items-center text-sm pb-2 border-b border-white/5">
+            <span className="text-slate-400">Doctor</span>
+            <span className="font-semibold text-white">{booking.providerName}</span>
+          </div>
+          <div className="flex justify-between items-center text-sm pb-2 border-b border-white/5">
+            <span className="text-slate-400">Clinic</span>
+            <span className="text-slate-200">{booking.clinicName}</span>
+          </div>
+          <div className="flex justify-between items-center text-sm pb-2 border-b border-white/5">
+            <span className="text-slate-400">Date &amp; Time</span>
+            <span className="text-cyan-400 font-medium">{formatDate(booking.appointmentTimestamp)}</span>
+          </div>
+          <div className="flex justify-between items-center text-sm pb-2 border-b border-white/5">
+            <span className="text-slate-400">Deposit Paid</span>
+            <span className="text-emerald-400 font-semibold flex items-center gap-1">
+              ₹ {booking.bookingFee || 200}
+              <ShieldCheck className="w-4 h-4" />
+            </span>
+          </div>
+          {booking.razorpayOrderId && (
+            <div className="flex justify-between items-center text-xs text-slate-500">
+              <span>Razorpay Order</span>
+              <span className="font-mono">{booking.razorpayOrderId}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-start gap-3">
+          <Zap className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+          <div className="text-xs text-slate-300 space-y-1">
+            <p className="font-semibold text-emerald-300">WhatsApp Confirmation Sent</p>
+            <p className="text-slate-400">
+              A booking pass and a 24-hour reminder have been dispatched via WhatsApp. You can reply &quot;CANCEL&quot; anytime to reschedule or cancel.
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="btn-primary w-full py-3 text-center flex items-center justify-center gap-2"
+        >
+          <span>View in My Appointments</span>
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Book Modal with Razorpay Checkout ─────────────────────────────────────────
 function BookModal({
   doctor,
+  patientName,
   onClose,
   onBooked,
 }: {
   doctor: DoctorResponse
+  patientName: string
   onClose: () => void
   onBooked: (r: BookingResponse) => void
 }) {
   const [timestamp, setTimestamp] = useState('')
   const [loading, setLoading] = useState(false)
+  const [stage, setStage] = useState<'idle' | 'creating_order' | 'awaiting_payment' | 'verifying'>('idle')
   const [err, setErr] = useState('')
 
   const minDate = new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 16)
@@ -113,14 +204,95 @@ function BookModal({
     if (!timestamp) { setErr('Please select a date and time'); return }
     setErr('')
     setLoading(true)
+    setStage('creating_order')
+
     try {
-      const res = await bookAppointment(doctor.providerId, timestamp + ':00')
-      onBooked(res)
-      onClose()
+      // 1. Ensure Razorpay checkout script is loaded
+      const scriptLoaded = await loadRazorpayScript()
+      if (!scriptLoaded) {
+        throw new Error('Could not load Razorpay payment SDK. Please check your internet connection.')
+      }
+
+      // 2. Call backend /api/v1/appointments/book -> returns PENDING_PAYMENT + razorpayOrderId
+      const bookingRes = await bookAppointment(doctor.providerId, timestamp + ':00')
+
+      if (!bookingRes.razorpayOrderId) {
+        // Fallback if Razorpay mock or zero-fee
+        onBooked(bookingRes)
+        onClose()
+        return
+      }
+
+      setStage('awaiting_payment')
+
+      // 3. Open Razorpay Checkout Modal
+      const options = {
+        key: bookingRes.razorpayKeyId || 'rzp_test_REPLACE_ME',
+        amount: (bookingRes.bookingFee ? bookingRes.bookingFee * 100 : 20000), // ₹200 deposit in paise
+        currency: 'INR',
+        name: 'Doppsy Healthcare Concierge',
+        description: `₹200 Booking Deposit - Dr. ${doctor.fullName}`,
+        order_id: bookingRes.razorpayOrderId,
+        prefill: {
+          name: patientName || '',
+        },
+        notes: {
+          appointmentId: bookingRes.appointmentId,
+          providerId: doctor.providerId,
+          clinicName: doctor.clinicName,
+        },
+        theme: {
+          color: '#06b6d4', // Cyan brand gradient accent
+        },
+        handler: async function (response: {
+          razorpay_payment_id: string
+          razorpay_order_id: string
+          razorpay_signature: string
+        }) {
+          setStage('verifying')
+          try {
+            // 4. Server-side HMAC SHA256 verification
+            const verified = await verifyPayment(
+              response.razorpay_order_id,
+              response.razorpay_payment_id,
+              response.razorpay_signature
+            )
+            onBooked(verified)
+            onClose()
+          } catch (verifyErr: unknown) {
+            setErr(verifyErr instanceof Error ? verifyErr.message : 'Payment verification failed.')
+            setLoading(false)
+            setStage('idle')
+          }
+        },
+        modal: {
+          ondismiss: function () {
+            setLoading(false)
+            setStage('idle')
+            setErr('Payment was cancelled. Your slot is held in pending status.')
+          },
+        },
+      }
+
+      const rzpWindow = window as unknown as {
+        Razorpay: new (opts: typeof options) => {
+          open: () => void
+          on: (evt: string, cb: (r: { error?: { description?: string } }) => void) => void
+        }
+      }
+
+      const rzp = new rzpWindow.Razorpay(options)
+      rzp.on('payment.failed', function (resp) {
+        setErr(resp.error?.description || 'Payment was declined or failed. Please try again.')
+        setLoading(false)
+        setStage('idle')
+      })
+      rzp.open()
+
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : 'Booking failed')
-    } finally {
+      setErr(e instanceof Error ? e.message : 'Booking initiation failed')
       setLoading(false)
+      setStage('idle')
     }
   }
 
@@ -132,7 +304,7 @@ function BookModal({
             <h3 className="text-lg font-bold text-white">{doctor.fullName}</h3>
             <p className="text-sm text-slate-400">{doctor.clinicName} · {doctor.location}</p>
           </div>
-          <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
+          <button onClick={onClose} disabled={loading} className="text-slate-500 hover:text-white transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -150,24 +322,44 @@ function BookModal({
               onChange={(e) => { setTimestamp(e.target.value); setErr('') }}
               className="input-field"
               required
+              disabled={loading}
             />
           </div>
 
-          {/* Fee preview */}
-          <div className="glass-card p-3 flex items-center justify-between">
-            <span className="text-xs text-slate-400">Platform booking fee</span>
-            <span className="text-sm font-semibold text-cyan-400">
-              {doctor.subscriptionTier === 'PREMIUM' ? '₹ 50'
-                : doctor.subscriptionTier === 'BASIC' ? '₹ 100' : '₹ 0'}
-            </span>
+          {/* ₹200 Deposit breakdown */}
+          <div className="glass-card p-4 space-y-2.5 bg-cyan-950/20 border-cyan-500/20">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-slate-300">Booking Deposit (Razorpay)</span>
+              <span className="text-base font-bold text-cyan-400">₹ 200</span>
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Collected to guarantee your zero-wait priority slot and prevent no-shows. Fully adjustable against doctor consultation fees at the clinic.
+            </p>
+            <div className="flex items-center gap-1.5 text-[11px] text-cyan-300/80 pt-1 border-t border-cyan-500/10">
+              <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
+              <span>256-Bit Encrypted Razorpay Checkout</span>
+            </div>
           </div>
 
           {err && (
             <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{err}</p>
           )}
 
-          <button id="confirm-booking-btn" type="submit" disabled={loading} className="btn-primary w-full py-3">
-            {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> Booking…</> : <>Confirm Booking <Zap className="w-4 h-4" /></>}
+          <button
+            id="confirm-booking-btn"
+            type="submit"
+            disabled={loading}
+            className="btn-primary w-full py-3.5 font-semibold text-sm flex items-center justify-center gap-2"
+          >
+            {stage === 'creating_order' ? (
+              <><Loader2 className="w-4 h-4 animate-spin" /> Preparing Payment…</>
+            ) : stage === 'awaiting_payment' ? (
+              <><Loader2 className="w-4 h-4 animate-spin" /> Awaiting Razorpay Completion…</>
+            ) : stage === 'verifying' ? (
+              <><Loader2 className="w-4 h-4 animate-spin" /> Verifying Payment…</>
+            ) : (
+              <>Confirm &amp; Pay ₹200 Deposit <Zap className="w-4 h-4" /></>
+            )}
           </button>
         </form>
       </div>
@@ -298,6 +490,7 @@ export default function DashboardPage() {
   const [loadingAppts, setLoadingAppts] = useState(true)
 
   const [bookingDoctor, setBookingDoctor] = useState<DoctorResponse | null>(null)
+  const [confirmedBooking, setConfirmedBooking] = useState<BookingResponse | null>(null)
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
 
   const showToast = (msg: string, type: 'success' | 'error') => setToast({ msg, type })
@@ -337,7 +530,8 @@ export default function DashboardPage() {
 
   // ── Handle booking success ──────────────────────────────────────────────────
   function handleBooked(res: BookingResponse) {
-    setAppointments((prev) => [res, ...prev])
+    setAppointments((prev) => [res, ...prev.filter((a) => a.appointmentId !== res.appointmentId)])
+    setConfirmedBooking(res)
     showToast(`Appointment booked with ${res.providerName}!`, 'success')
   }
 
@@ -560,8 +754,17 @@ export default function DashboardPage() {
       {bookingDoctor && (
         <BookModal
           doctor={bookingDoctor}
+          patientName={user.fullName}
           onClose={() => setBookingDoctor(null)}
           onBooked={handleBooked}
+        />
+      )}
+
+      {/* ── Booking Confirmation Modal ── */}
+      {confirmedBooking && (
+        <BookingConfirmationModal
+          booking={confirmedBooking}
+          onClose={() => setConfirmedBooking(null)}
         />
       )}
 

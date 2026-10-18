@@ -13,7 +13,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import { getDoctors, bookAppointment, logout, getStoredUser } from '../../src/services/api'
-import type { DoctorResponse, Specialty } from '../../src/types'
+import type { DoctorResponse, BookingResponse, Specialty } from '../../src/types'
+import RazorpayPaymentModal from '../../src/components/RazorpayPaymentModal'
 
 const SPECIALTIES = [
   'ALL',
@@ -32,6 +33,8 @@ export default function PatientDashboardScreen() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [bookingProviderId, setBookingProviderId] = useState<string | null>(null)
+  const [pendingBooking, setPendingBooking] = useState<BookingResponse | null>(null)
+  const [showPaymentModal, setShowPaymentModal] = useState(false)
 
   // Load user details
   useEffect(() => {
@@ -90,30 +93,38 @@ export default function PatientDashboardScreen() {
     })
 
     try {
+      // Step 1: Initiate booking on backend — returns PENDING_PAYMENT status and Razorpay Order ID
       const booking = await bookAppointment(doctor.providerId, timestampIso)
 
-      // Native Alert showing the WhatsApp confirmation integration
-      Alert.alert(
-        '⚡ Zero-Wait Slot Confirmed!',
-        `Your appointment with ${doctor.fullName} at ${doctor.clinicName} is confirmed for ${formattedTime}.\n\n📲 WhatsApp Concierge Alert:\nA confirmation message and 24-hour reminder have been dispatched to your mobile.\n\nReply "CANCEL" on WhatsApp anytime to cancel.`,
-        [
-          {
-            text: 'View Details',
-            style: 'default',
-          },
-          {
-            text: 'OK',
-            style: 'cancel',
-          },
-        ]
-      )
+      // Step 2: Open Razorpay Payment Modal for the ₹200 deposit
+      setPendingBooking(booking)
+      setShowPaymentModal(true)
     } catch (err: unknown) {
       const errorMsg =
-        err instanceof Error ? err.message : 'Unable to complete zero-wait booking.'
+        err instanceof Error ? err.message : 'Unable to initiate zero-wait booking.'
       Alert.alert('Booking Error', errorMsg)
     } finally {
       setBookingProviderId(null)
     }
+  }
+
+  // Handle Successful Razorpay Verification
+  function handlePaymentSuccess(verifiedBooking: BookingResponse) {
+    setShowPaymentModal(false)
+    setPendingBooking(null)
+
+    // Navigate to Confirmation Screen with booking parameters
+    router.push({
+      pathname: '/confirmation',
+      params: {
+        appointmentId: verifiedBooking.appointmentId,
+        providerName: verifiedBooking.providerName,
+        clinicName: verifiedBooking.clinicName,
+        appointmentTimestamp: verifiedBooking.appointmentTimestamp,
+        bookingFee: (verifiedBooking.bookingFee || 200).toString(),
+        razorpayOrderId: verifiedBooking.razorpayOrderId || '',
+      },
+    })
   }
 
   // Handle Logout
@@ -276,6 +287,15 @@ export default function PatientDashboardScreen() {
           }
         />
       )}
+
+      {/* Razorpay Deposit Payment Sheet Modal */}
+      <RazorpayPaymentModal
+        visible={showPaymentModal}
+        booking={pendingBooking}
+        patientName={userName}
+        onClose={() => setShowPaymentModal(false)}
+        onSuccess={handlePaymentSuccess}
+      />
     </SafeAreaView>
   )
 }
