@@ -1,33 +1,36 @@
 # ==============================================================================
 # Doppsy Healthcare Concierge — Continuous Deployment (CD) Pipeline
 # ==============================================================================
-# Triggers on every push to 'main' branch or manual dispatch via GitHub UI.
+# Triggers on push to 'main' or manual run via GitHub Actions UI.
 # Connects securely via SSH to the Ubuntu VPS, pulls the latest code, and
-# triggers a zero-downtime rolling rebuild of the production Docker Compose stack.
+# rebuilds the production Docker Compose stack with zero downtime.
 #
 # ------------------------------------------------------------------------------
-# REQUIRED GITHUB REPOSITORY SECRETS:
-# Navigate to: GitHub Repo -> Settings -> Secrets and variables -> Actions
-# Click 'New repository secret' and add the following:
+# HOW TO ADD GITHUB REPOSITORY SECRETS (Fixes 'Error: missing server host'):
+# 1. On GitHub.com, navigate to your repository:
+#    https://github.com/tutu82430-alt/DOPPSY
+# 2. Click 'Settings' (top navigation tab with gear icon).
+# 3. In the left sidebar, click 'Secrets and variables' -> 'Actions'.
+# 4. Under 'Repository secrets', click 'New repository secret'.
+# 5. Add the following 3 REQUIRED secrets:
 #
-# 1. HOST:
-#    The public IPv4 address or domain of your Ubuntu VPS (e.g. 192.0.2.1 or vps.doppsy.com)
+#    SECRET 1: HOST
+#    - Name : HOST (or VPS_HOST)
+#    - Value: Your Ubuntu VPS public IPv4 address (e.g. 123.45.67.89) or domain.
 #
-# 2. USERNAME:
-#    The SSH user on the VPS (e.g. 'root' or a sudoer like 'ubuntu')
+#    SECRET 2: USERNAME
+#    - Name : USERNAME (or VPS_USERNAME)
+#    - Value: The SSH user on your VPS (typically 'root' or 'ubuntu').
 #
-# 3. SSH_PRIVATE_KEY:
-#    The private OpenSSH key paired with your server's authorized_keys.
-#    Generate on your local machine / server via:
-#      ssh-keygen -t ed25519 -C "github-actions-doppsy"
-#    Copy the private key (~/.ssh/id_ed25519) into this GitHub Secret.
-#    Append the public key (~/.ssh/id_ed25519.pub) to /root/.ssh/authorized_keys on the VPS.
+#    SECRET 3: KEY
+#    - Name : KEY (or SSH_PRIVATE_KEY)
+#    - Value: The ENTIRE OpenSSH private key (including '-----BEGIN ... PRIVATE KEY-----'
+#             and '-----END ... PRIVATE KEY-----').
+#             Ensure the matching public key is in ~/.ssh/authorized_keys on the VPS.
 #
-# 4. PORT (Optional):
-#    Custom SSH port if your server does not use the default port 22.
-#
-# 5. PASSPHRASE (Optional):
-#    Passphrase if your SSH private key was generated with encryption.
+#    OPTIONAL SECRETS:
+#    - PORT       : Custom SSH port if not using 22 (e.g. 2222).
+#    - PASSPHRASE : Passphrase if your private SSH key is password-protected.
 # ------------------------------------------------------------------------------
 
 name: Deploy to Production VPS
@@ -53,12 +56,38 @@ jobs:
       - name: Checkout Repository Metadata
         uses: actions/checkout@v4
 
+      - name: Validate GitHub Secrets (Pre-flight Check)
+        run: |
+          echo "Checking required deployment secrets..."
+          MISSING=""
+          if [ -z "${{ secrets.HOST || secrets.VPS_HOST }}" ]; then
+            MISSING="${MISSING} HOST"
+          fi
+          if [ -z "${{ secrets.USERNAME || secrets.VPS_USERNAME }}" ]; then
+            MISSING="${MISSING} USERNAME"
+          fi
+          if [ -z "${{ secrets.KEY || secrets.SSH_PRIVATE_KEY || secrets.VPS_SSH_KEY }}" ]; then
+            MISSING="${MISSING} KEY"
+          fi
+
+          if [ -n "$MISSING" ]; then
+            echo "::error::Missing required repository secret(s):$MISSING"
+            echo "=========================================================================="
+            echo "ACTION REQUIRED: Please configure the missing secrets in GitHub:"
+            echo "1. Go to: https://github.com/tutu82430-alt/DOPPSY/settings/secrets/actions"
+            echo "2. Click 'New repository secret'"
+            echo "3. Add the missing secret(s):$MISSING"
+            echo "=========================================================================="
+            exit 1
+          fi
+          echo "All required secrets (HOST, USERNAME, KEY) are present. Proceeding to SSH connection."
+
       - name: Execute Remote Deployment via SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.HOST || secrets.VPS_HOST }}
           username: ${{ secrets.USERNAME || secrets.VPS_USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY || secrets.VPS_SSH_KEY }}
+          key: ${{ secrets.KEY || secrets.SSH_PRIVATE_KEY || secrets.VPS_SSH_KEY }}
           port: ${{ secrets.PORT || secrets.VPS_PORT || 22 }}
           passphrase: ${{ secrets.PASSPHRASE || '' }}
           script_stop: true
@@ -76,7 +105,6 @@ jobs:
             # ------------------------------------------------------------------
             PROJECT_DIR="/root/doppsy"
             if [ ! -d "$PROJECT_DIR" ]; then
-              # Fallback check for current user home if not running as root
               if [ -d "$HOME/doppsy" ]; then
                 PROJECT_DIR="$HOME/doppsy"
               else
@@ -118,9 +146,6 @@ jobs:
             # 4. Rebuild & Deploy Containers
             # ------------------------------------------------------------------
             echo "[+] Rebuilding and launching production stack in background..."
-            # -f docker-compose.prod.yml : Targets production configuration
-            # up --build -d             : Builds updated code and restarts changed containers
-            # --remove-orphans          : Cleans up obsolete service containers
             $COMPOSE_CMD -f docker-compose.prod.yml up --build -d --remove-orphans
 
             # ------------------------------------------------------------------

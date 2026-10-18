@@ -3,6 +3,14 @@ version: '3.8'
 # ==============================================================================
 # Doppsy Healthcare Concierge — Production Docker Orchestration
 # ==============================================================================
+# Services:
+#   1. db        : PostgreSQL 15 (Internal Only — Port 5432)
+#   2. rabbitmq  : RabbitMQ 3 Management (Smart Waitlist Engine — Internal Only)
+#   3. backend   : Spring Boot 3 Java 17 Application (Internal Port 8080)
+#   4. frontend  : Next.js 14 App Router (Internal Port 3000)
+#   5. nginx     : Reverse Proxy & Gateway (Public Ports 80 & 443)
+#   6. certbot   : Let's Encrypt SSL Automated Certificate Renewal
+# ==============================================================================
 
 networks:
   doppsy-internal:
@@ -25,14 +33,14 @@ services:
     container_name: doppsy-db-prod
     restart: always
     environment:
-      POSTGRES_DB: doppsy
-      POSTGRES_USER: doppsy_user
-      POSTGRES_PASSWORD: doppsy_secret
+      POSTGRES_DB: ${POSTGRES_DB:-doppsy}
+      POSTGRES_USER: ${POSTGRES_USER:-doppsy_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-doppsy_secret}
     volumes:
       - postgres_prod_data:/var/lib/postgresql/data
       - ./schema.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U doppsy_user -d doppsy"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-doppsy_user} -d ${POSTGRES_DB:-doppsy}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -48,8 +56,8 @@ services:
     container_name: doppsy-rabbitmq-prod
     restart: always
     environment:
-      RABBITMQ_DEFAULT_USER: doppsy_user
-      RABBITMQ_DEFAULT_PASS: doppsy_secret
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-doppsy_user}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-doppsy_secret}
     healthcheck:
       test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
       interval: 10s
@@ -57,7 +65,7 @@ services:
       retries: 5
     networks:
       - doppsy-internal
-    # Ports 5672 & 15672 kept internal; routed or exposed only if needed
+    # Ports 5672 & 15672 kept strictly internal — no host port exposure
 
   # ----------------------------------------------------------------------------
   # 3. Backend: Spring Boot 3 Java Application
@@ -74,22 +82,27 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/doppsy
-      SPRING_DATASOURCE_USERNAME: doppsy_user
-      SPRING_DATASOURCE_PASSWORD: doppsy_secret
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-doppsy}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-doppsy_user}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-doppsy_secret}
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
       SPRING_RABBITMQ_HOST: rabbitmq
       SPRING_RABBITMQ_PORT: 5672
-      SPRING_RABBITMQ_USERNAME: doppsy_user
-      SPRING_RABBITMQ_PASSWORD: doppsy_secret
-      DOPPSY_JWT_SECRET: "ZG9wcHN5LXN1cGVyLXNlY3JldC1rZXktMjAyNi1kb3Bwc3ktaGVhbHRoY2FyZQ=="
-      DOPPSY_WHATSAPP_VERIFY_TOKEN: "doppsy_whatsapp_secret_token_2026"
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_DEFAULT_USER:-doppsy_user}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_DEFAULT_PASS:-doppsy_secret}
+      DOPPSY_JWT_SECRET: ${DOPPSY_JWT_SECRET:-ZG9wcHN5LXN1cGVyLXNlY3JldC1rZXktMjAyNi1kb3Bwc3ktaGVhbHRoY2FyZQ==}
+      DOPPSY_WHATSAPP_VERIFY_TOKEN: ${DOPPSY_WHATSAPP_VERIFY_TOKEN:-doppsy_whatsapp_secret_token_2026}
+      DOPPSY_WHATSAPP_ACCESS_TOKEN: ${DOPPSY_WHATSAPP_ACCESS_TOKEN:-mock_whatsapp_access_token}
+      DOPPSY_WHATSAPP_PHONE_NUMBER_ID: ${DOPPSY_WHATSAPP_PHONE_NUMBER_ID:-105948372615201}
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-rzp_test_REPLACE_ME}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-REPLACE_ME_WITH_RAZORPAY_SECRET}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-mock_openai_api_key}
     networks:
       - doppsy-internal
     # Backend port 8080 kept strictly internal — traffic routed via Nginx
 
   # ----------------------------------------------------------------------------
-  # 3. Frontend: Next.js 14 App Router
+  # 4. Frontend: Next.js 14 App Router
   # ----------------------------------------------------------------------------
   frontend:
     build:
@@ -110,7 +123,7 @@ services:
     # Frontend port 3000 kept strictly internal — traffic routed via Nginx
 
   # ----------------------------------------------------------------------------
-  # 4. Reverse Proxy: Nginx Gateway (Public Entry Point with SSL)
+  # 5. Reverse Proxy: Nginx Gateway (Public Entry Point)
   # ----------------------------------------------------------------------------
   nginx:
     image: nginx:alpine
@@ -130,7 +143,7 @@ services:
       - doppsy-internal
 
   # ----------------------------------------------------------------------------
-  # 5. SSL Renewal: Certbot Automatic Let's Encrypt Certificate Renewal
+  # 6. SSL Renewal: Certbot Automatic Let's Encrypt Certificate Renewal
   # ----------------------------------------------------------------------------
   certbot:
     image: certbot/certbot:latest
